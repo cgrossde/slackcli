@@ -1,0 +1,20 @@
+# Write-allowlist for slackcli
+#
+# One Slack channel ID per line. The CLI will only send messages, add reactions,
+# delete messages, forward, or upload snippets to channels listed here.
+#
+# Copy this file to allowlist.txt (gitignored) and add your channel IDs:
+#
+#   cp allowlist.txt.example allowlist.txt
+#
+# Find a channel's ID in Slack: open the channel → channel name dropdown →
+# scroll to the bottom — the ID starts with C or G.
+#
+# Format:
+#   CXXXXXXXXXX          bare channel ID
+#   CXXXXXXXXXX  # note  inline comment is stripped
+#   # full-line comment  ignored
+
+# Example:
+# C0123456789  # #general
+# C9876543210  # #team-alerts

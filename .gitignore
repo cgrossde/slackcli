@@ -1,0 +1,5 @@
+slackcli
+/tmp/
+*.test
+probe_*
+internal/slack/allowlist.txt
