@@ -279,9 +279,8 @@ func TestFormatActivityPlain_textTruncation(t *testing.T) {
 }
 
 func TestFormatActivityPlain_thread_v2_readRefUsesThreadTs(t *testing.T) {
-	// For thread_v2, the read hint must be the three-part form
-	// channelID:threadTs:replyTs so the reader gets both the thread root
-	// (for fetching) and the specific reply ts (for context).
+	// For thread_v2, the read hint emits both a Thread line (thread root) and
+	// a Message line (three-part form) so the caller can choose.
 	result := slack.ActivityFeedResult{
 		Items: []slack.ActivityItem{{
 			Type:      "thread_v2",
@@ -292,10 +291,33 @@ func TestFormatActivityPlain_thread_v2_readRefUsesThreadTs(t *testing.T) {
 		}},
 	}
 	got := formatActivityPlain(result, nil, nil, nil, ActivityFlags{})
-	assertContains(t, got, "→ slackcli read C9:1718197000.000000:1718197500.000000")
-	// Must not emit the old two-part form pointing only at the thread root.
-	if strings.Contains(got, "→ slackcli read C9:1718197000.000000\n") {
-		t.Errorf("must not emit two-part root-only hint, got: %s", got)
+	assertContains(t, got, "→ Thread:  slackcli read C9:1718197000.000000")
+	assertContains(t, got, "→ Message: slackcli read C9:1718197000.000000:1718197500.000000")
+	// Must not emit a bare two-part form pointing only at the reply ts.
+	if strings.Contains(got, "→ slackcli read C9:1718197500.000000\n") {
+		t.Errorf("must not emit bare reply-ts-only hint, got: %s", got)
+	}
+}
+
+func TestFormatActivityPlain_mention_in_thread_readRefUsesThreadTs(t *testing.T) {
+	// Non-thread_v2 items (e.g. at_user mentions) that are replies inside a
+	// thread must also emit Thread + Message refs.
+	result := slack.ActivityFeedResult{
+		Items: []slack.ActivityItem{{
+			Type:        "at_user",
+			FeedTs:      "1718197900.000000",
+			ChannelID:   "C0B1T7FLAP5",
+			ThreadTs:    "1779796663.930439", // thread root
+			MessageTs:   "1779866810.875989", // reply ts (differs from ThreadTs)
+			ActorUserID: "U_HP",
+		}},
+	}
+	got := formatActivityPlain(result, nil, nil, nil, ActivityFlags{})
+	assertContains(t, got, "→ Thread:  slackcli read C0B1T7FLAP5:1779796663.930439")
+	assertContains(t, got, "→ Message: slackcli read C0B1T7FLAP5:1779796663.930439:1779866810.875989")
+	// Must not emit a bare two-part form pointing only at the reply ts.
+	if strings.Contains(got, "→ slackcli read C0B1T7FLAP5:1779866810.875989\n") {
+		t.Errorf("must not emit bare reply-ts-only hint, got:\n%s", got)
 	}
 }
 
@@ -447,6 +469,51 @@ func TestFormatActivityJSON_thread_v2_fields(t *testing.T) {
 	}
 	if rec.ThreadTs != "1718197000.000000" {
 		t.Errorf("thread_ts: got %q, want thread root 1718197000.000000", rec.ThreadTs)
+	}
+}
+
+func TestFormatActivityJSON_readRef_replyInThread(t *testing.T) {
+	// read_ref must be the three-part form for any item whose ThreadTs differs
+	// from MessageTs, regardless of type.
+	result := slack.ActivityFeedResult{
+		Items: []slack.ActivityItem{{
+			Type:      "at_user",
+			FeedTs:    "1.0",
+			ChannelID: "CABC",
+			ThreadTs:  "1000.0",
+			MessageTs: "2000.0",
+		}},
+	}
+	out := formatActivityJSON(result, nil, nil, nil)
+	var rec activityItemJSON
+	if err := json.Unmarshal([]byte(strings.TrimRight(out, "\n")), &rec); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := "CABC:1000.0:2000.0"
+	if rec.ReadRef != want {
+		t.Errorf("read_ref: got %q, want %q", rec.ReadRef, want)
+	}
+}
+
+func TestFormatActivityJSON_readRef_standaloneMessage(t *testing.T) {
+	// When ThreadTs is empty (or equals MessageTs), read_ref must be the
+	// two-part channelID:messageTs form.
+	result := slack.ActivityFeedResult{
+		Items: []slack.ActivityItem{{
+			Type:      "dm",
+			FeedTs:    "1.0",
+			ChannelID: "DABC",
+			MessageTs: "3000.0",
+		}},
+	}
+	out := formatActivityJSON(result, nil, nil, nil)
+	var rec activityItemJSON
+	if err := json.Unmarshal([]byte(strings.TrimRight(out, "\n")), &rec); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := "DABC:3000.0"
+	if rec.ReadRef != want {
+		t.Errorf("read_ref: got %q, want %q", rec.ReadRef, want)
 	}
 }
 

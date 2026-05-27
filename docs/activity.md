@@ -50,11 +50,13 @@ Raw API type names (`list_record_edited`, `bot_dm_bundle`, etc.) also work verba
 
 [2] #dev · Bob Smith replied in thread · 2025-05-14 09:20
     latest reply text...
-    → slackcli read C045DEF6:1718197900.000200
+    → Thread:  slackcli read C045DEF6:1718197000.000100
+    → Message: slackcli read C045DEF6:1718197000.000100:1718197900.000200
 
 [3] #general · Carlos mentioned you · 2025-05-14 09:15
     hey @you can you look at this?
-    → slackcli read C078GHI9:1718197850.000300
+    → Thread:  slackcli read C078GHI9:1718197700.000100
+    → Message: slackcli read C078GHI9:1718197700.000100:1718197850.000300
 
 [4] @Eve · Eve · DM · 2025-05-14 09:10
     hey, got a minute?
@@ -66,16 +68,18 @@ Raw API type names (`list_record_edited`, `bot_dm_bundle`, etc.) also work verba
 Each item shows:
 - **Header:** `[N] channel · description · timestamp`
 - **Body:** message text preview (truncated to ~200 runes), indented 4 spaces
-- **Ref:** `→ slackcli read <channel_id:ts>` for immediate follow-up
+- **Ref:** one of:
+  - `→ slackcli read <channelID:ts>` — for top-level messages (reactions, DMs, standalone mentions)
+  - `→ Thread:  slackcli read <channelID:threadTs>` + `→ Message: slackcli read <channelID:threadTs:replyTs>` — for replies inside a thread, giving you the choice to read the whole thread or jump directly to the specific message
 
-Use `slackcli read <channel_id:ts>` to fetch the full thread for any item.
+Use `slackcli read <ref>` to fetch the full thread for any item.
 
 ## JSON output (`--json`)
 
 One JSON object per line (NDJSON). No presenter footer.
 
 ```json
-{"type":"message_reaction","feed_ts":"1718197925.001234","is_unread":true,"channel_id":"C012ABC3","channel_name":"#ops","ts":"1718197800.000100","thread_ts":"","user_id":"U123","username":"alice","display_name":"Alice","text":"your message...","reaction":"thumbsup","reactor_id":"U456","reactor_name":"Bob"}
+{"type":"message_reaction","feed_ts":"1718197925.001234","is_unread":true,"channel_id":"C012ABC3","channel_name":"#ops","ts":"1718197800.000100","thread_ts":"","read_ref":"C012ABC3:1718197800.000100","user_id":"U123","username":"alice","display_name":"Alice","text":"your message...","reaction":"thumbsup","reactor_id":"U456","reactor_name":"Bob"}
 ```
 
 ### Fields
@@ -94,6 +98,7 @@ One JSON object per line (NDJSON). No presenter footer.
 | `text` | Message body preview (truncated to ~200 runes) |
 | `reaction` | Emoji name without colons (only for `message_reaction`) |
 | `reactor_id` / `reactor_name` | Who reacted (only for `message_reaction`) |
+| `read_ref` | Ready-to-use `slackcli read` argument — three-part `channelID:threadTs:replyTs` when the item is a reply inside a thread; two-part `channelID:ts` otherwise |
 
 When more items are available a pagination trailer is emitted as the final line:
 

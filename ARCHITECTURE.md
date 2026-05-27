@@ -261,7 +261,7 @@ Full field documentation is in each command's doc file. Quick reference:
 | `search --users --json` | `id`, `name`, `display_name`, `email`, `source` | none |
 | `read --json` | `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `is_root`, `reply_count?`, `channel_id`, `channel_type`, `files?`, `reactions?`, `attachments?` | none |
 | `live --json` | `type`, `subtype`, `channel_id`, `channel_name`, `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `reaction?`, `item_ts?`, `attachments?` | none |
-| `activity --json` | `type`, `feed_ts`, `is_unread`, `channel_id`, `channel_name`, `ts`, `thread_ts?`, `user_id`, `username`, `display_name`, `text`, `reaction?`, `reactor_id?`, `reactor_name?` | `_pagination` when more items exist |
+| `activity --json` | `type`, `feed_ts`, `is_unread`, `channel_id`, `channel_name`, `ts`, `thread_ts?`, `read_ref`, `user_id`, `username`, `display_name`, `text`, `reaction?`, `reactor_id?`, `reactor_name?` | `_pagination` when more items exist |
 | `history --json` | `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `is_root`, `reply_count?`, `channel_id`, `channel_type`, `files?`, `reactions?`, `attachments?` | `_pagination` when more messages exist |
 
 ---

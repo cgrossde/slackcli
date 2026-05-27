@@ -357,12 +357,11 @@ func formatActivityPlain(
 		}
 
 		if item.ChannelID != "" && item.MessageTs != "" {
-			// For thread_v2, emit the three-part channelID:threadTs:replyTs form
-			// so the read hint carries both the thread root (for fetching) and
-			// the specific reply ts (for context). For all other types the
-			// two-part channel:ts form is sufficient.
-			if item.Type == "thread_v2" && item.ThreadTs != "" {
-				fmt.Fprintf(&sb, "    → slackcli read %s:%s:%s\n", item.ChannelID, item.ThreadTs, item.MessageTs)
+			if item.ThreadTs != "" && item.ThreadTs != item.MessageTs {
+				// Reply inside a thread: show both refs so the caller can jump
+				// to the whole thread or navigate directly to the message.
+				fmt.Fprintf(&sb, "    → Thread:  slackcli read %s:%s\n", item.ChannelID, item.ThreadTs)
+				fmt.Fprintf(&sb, "    → Message: slackcli read %s:%s:%s\n", item.ChannelID, item.ThreadTs, item.MessageTs)
 			} else {
 				fmt.Fprintf(&sb, "    → slackcli read %s:%s\n", item.ChannelID, item.MessageTs)
 			}
@@ -483,6 +482,7 @@ type activityItemJSON struct {
 	Reaction    string `json:"reaction,omitempty"`
 	ReactorID   string `json:"reactor_id,omitempty"`
 	ReactorName string `json:"reactor_name,omitempty"`
+	ReadRef     string `json:"read_ref"`
 }
 
 // activityPaginationJSON is the trailer emitted when more items exist.
@@ -510,6 +510,13 @@ func formatActivityJSON(
 			ChannelName: activityChannelLabel(item, chanNames),
 			Ts:          item.MessageTs,
 			ThreadTs:    item.ThreadTs,
+		}
+
+		// Read reference — three-part form when item is a reply in a thread.
+		if item.ThreadTs != "" && item.ThreadTs != item.MessageTs {
+			rec.ReadRef = item.ChannelID + ":" + item.ThreadTs + ":" + item.MessageTs
+		} else {
+			rec.ReadRef = item.ChannelID + ":" + item.MessageTs
 		}
 
 		// Actor
