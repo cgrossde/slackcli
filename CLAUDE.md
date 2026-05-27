@@ -15,8 +15,8 @@ The intended caller is an LLM agent. Every design decision must serve that calle
 
 | Command | Flags | Description |
 |---|---|---|
-| `auth login` | `--workspace` (required), `--firefox` | Open browser, extract credentials, save to Keychain |
-| `auth reauth` | `--workspace` (required), `--firefox` | Delete existing credentials then re-login |
+| `auth login` | `--workspace` (required) | Open Chrome via CDP, extract credentials, save to Keychain |
+| `auth reauth` | `--workspace` (required) | Delete existing credentials then re-login |
 | `auth status` | `--workspace` (optional) | Verify saved tokens via `auth.test` |
 | `auth logout` | `--workspace` (required) | Remove Keychain entry |
 | `auth default` | `--workspace` (optional) | Get or set the default workspace |

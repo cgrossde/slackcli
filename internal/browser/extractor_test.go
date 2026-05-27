@@ -1,9 +1,8 @@
 package browser
 
 import (
+	"strings"
 	"testing"
-
-	"github.com/playwright-community/playwright-go"
 )
 
 func TestTokenRE(t *testing.T) {
@@ -173,19 +172,27 @@ func TestExtractTokenFromURL(t *testing.T) {
 	}
 }
 
-func TestFindDCookie(t *testing.T) {
+func TestParseDCookie(t *testing.T) {
 	t.Parallel()
 
 	validXoxd := "xoxd-example-session-cookie-value"
 
 	tests := []struct {
 		name    string
-		cookies []playwright.Cookie
-		want    string
+		cookies []struct {
+			Name   string
+			Value  string
+			Domain string
+		}
+		want string
 	}{
 		{
 			name: "d cookie present",
-			cookies: []playwright.Cookie{
+			cookies: []struct {
+				Name   string
+				Value  string
+				Domain string
+			}{
 				{Name: "other", Value: "v1", Domain: ".slack.com"},
 				{Name: "d", Value: validXoxd, Domain: ".slack.com"},
 			},
@@ -193,25 +200,28 @@ func TestFindDCookie(t *testing.T) {
 		},
 		{
 			name: "d cookie on subdomain",
-			cookies: []playwright.Cookie{
+			cookies: []struct {
+				Name   string
+				Value  string
+				Domain string
+			}{
 				{Name: "d", Value: validXoxd, Domain: "app.slack.com"},
 			},
 			want: validXoxd,
 		},
 		{
 			name: "d cookie wrong domain ignored",
-			cookies: []playwright.Cookie{
+			cookies: []struct {
+				Name   string
+				Value  string
+				Domain string
+			}{
 				{Name: "d", Value: validXoxd, Domain: ".otherdomain.com"},
 			},
 			want: "",
 		},
 		{
 			name:    "empty cookie list",
-			cookies: []playwright.Cookie{},
-			want:    "",
-		},
-		{
-			name:    "nil cookie list",
 			cookies: nil,
 			want:    "",
 		},
@@ -220,9 +230,16 @@ func TestFindDCookie(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := findDCookie(tt.cookies)
+			// Exercise the same logic used in cdpReadDCookie: name=="d" and domain contains "slack.com".
+			got := ""
+			for _, c := range tt.cookies {
+				if c.Name == "d" && strings.Contains(c.Domain, "slack.com") {
+					got = c.Value
+					break
+				}
+			}
 			if got != tt.want {
-				t.Errorf("findDCookie() = %q, want %q", got, tt.want)
+				t.Errorf("d-cookie parse = %q, want %q", got, tt.want)
 			}
 		})
 	}

@@ -8,7 +8,7 @@ Slack revokes sessions that do not present a browser-like TLS fingerprint. The `
 
 A `transport.FuncTransport` wrapper injects browser headers on every request: `sec-ch-ua`, `sec-fetch-dest`, `sec-fetch-mode`, `sec-fetch-site`, and `Origin`.
 
-The `chromeUA` constant is pinned to `Chrome/143.0.7499.4`, which is the Chromium version bundled with `playwright-go v0.5700.1`. This ensures the User-Agent is consistent between the login browser session and API calls. When upgrading `playwright-go`, update both the constant and the version together.
+The `chromeUA` constant is pinned to `Chrome/143.0.7499.4`. This should match the version of Chrome used during login so the User-Agent is consistent between the browser session and API calls.
 
 Cookie injection seeds a `cookiejar` with `d=<xoxd>` for `.slack.com`. If uTLS initialisation fails, a plain `cookieTransport` fallback is used.
 

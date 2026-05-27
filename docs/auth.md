@@ -15,14 +15,14 @@ slackcli auth login --workspace <name>
 Flags:
 
 - `--workspace` (required) — Slack workspace name or domain. Normalised to bare domain (e.g. myorg → myorg.slack.com, https://myorg.slack.com/client/... → myorg.slack.com).
-- `--firefox` — Use Firefox browser instead of Chromium. Browser opens visibly so you can log in.
 
 Process:
 
-- Opens a browser window at the workspace URL pointing to the login page.
+- Opens a real Chrome or Chromium browser at the workspace URL. Chrome is located automatically on the system; set `CHROME_APP` to override the binary path.
 - Uses a persistent browser profile at `/tmp/slackcli-browser-profile` so you only need to log in once; subsequent runs reuse the saved session (cookies, localStorage).
-- Monitors network requests and responses to extract the xoxc token from `localConfig_v2` in localStorage.
-- Extracts the xoxd cookie from browser storage state after login completes.
+- Communicates with Chrome via the Chrome DevTools Protocol (CDP) over a local WebSocket on port 9222.
+- Monitors network requests and `Runtime.evaluate` reads of `localConfig_v2` in localStorage to extract the xoxc token.
+- Polls `Network.getCookies` every second to capture the xoxd session cookie once login completes.
 - Saves both token and cookie to the macOS Keychain as a single generic-password item keyed by workspace domain.
 - Timeout: 5 minutes. After 5 minutes, the operation aborts with an error.
 - Ctrl+C cancels the login gracefully. Press Ctrl+C a second time to force-kill the browser after 3 seconds.
@@ -37,7 +37,7 @@ Usage:
 slackcli auth reauth --workspace <name>
 ```
 
-Flags: Same as `auth login` (`--workspace` required, `--firefox` optional).
+Flags: `--workspace` (required).
 
 Process:
 
@@ -158,8 +158,8 @@ This command is also run automatically at login time on Enterprise Grid accounts
 The auth command is implemented across several files:
 
 - `cmd/auth.go` contains Layer 1 pure functions: `AuthStatus`, `AuthLogout`, `AuthDefault`, `AuthWorkspaces`, `FormatEntryStatus`, `CanonicalDomain`.
-- `main.go` defines `makeLoginRunE` which injects Playwright browser logic and signal handling for login and reauth. After a successful save it calls `AuthTest` + `GridWorkspaces` to populate `EnterpriseID` and `GridWorkspaces` on the keychain entry (best-effort).
-- `internal/browser/extractor.go` manages Playwright session lifecycle and credential extraction from the browser environment.
+- `main.go` defines `makeLoginRunE` which injects CDP browser logic and signal handling for login and reauth. After a successful save it calls `AuthTest` + `GridWorkspaces` to populate `EnterpriseID` and `GridWorkspaces` on the keychain entry (best-effort).
+- `internal/browser/extractor.go` launches Chrome with `--remote-debugging-port`, connects via CDP WebSocket, and extracts credentials by polling localStorage and cookies.
 - `internal/keychain/keychain.go` provides Keychain read, write, delete, and list operations. `Entry` carries two optional Enterprise Grid fields: `enterprise_id` and `grid_workspaces` (slice of sibling workspace domains).
 - `internal/keychain/default.go` provides default workspace management: `SetDefault`, `GetDefault`, `DeleteDefault`, `ResolveDefault`. The default is stored as a Keychain item with service=`slackcli`, account=`__default__`, and value=workspace domain string. `DeleteDefault()` is a no-op when no default is stored.
 - `internal/slack/grid.go` implements `(*Client).GridWorkspaces(ctx, workspace)` which calls `client.userBoot` and returns `[]GridWorkspace{ID, Domain}`.
