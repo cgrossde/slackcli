@@ -696,13 +696,13 @@ func TestReadMessageJSON_workspaceFieldPresent(t *testing.T) {
 		Ts:          "1.0",
 		ChannelID:   "C1",
 		ChannelType: "channel",
-		Workspace:   "sap-car.slack.com",
+		Workspace:   "myorg.slack.com",
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if !strings.Contains(string(data), `"workspace":"sap-car.slack.com"`) {
+	if !strings.Contains(string(data), `"workspace":"myorg.slack.com"`) {
 		t.Errorf("expected workspace field in JSON, got: %s", string(data))
 	}
 }

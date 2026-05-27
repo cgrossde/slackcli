@@ -113,7 +113,7 @@ func Forward(args []string, flags ForwardFlags) (string, error) {
 	}
 
 	// Use the workspace extracted from the URL when available; it's already the
-	// correct host (e.g. "concur-blue.slack.com"). Fall back to the resolved
+	// correct host (e.g. "myorg.slack.com"). Fall back to the resolved
 	// keychain domain for the channelID:ts and --channel/--ts forms.
 	if srcWorkspace == "" {
 		srcWorkspace = workspace

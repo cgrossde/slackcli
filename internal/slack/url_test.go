@@ -37,8 +37,8 @@ func TestParseSlackURL_valid(t *testing.T) {
 		},
 		{
 			name:          "thread reply URL",
-			input:         "https://concur-blue.slack.com/archives/C0B3PCPL0CF/p1779023515154839?thread_ts=1779023514.528229&cid=C0B3PCPL0CF",
-			wantWorkspace: "concur-blue.slack.com",
+			input:         "https://myorg.slack.com/archives/C0B3PCPL0CF/p1779023515154839?thread_ts=1779023514.528229&cid=C0B3PCPL0CF",
+			wantWorkspace: "myorg.slack.com",
 			wantChannel:   "C0B3PCPL0CF",
 			wantTs:        "1779023515.154839",
 			wantThreadTs:  "1779023514.528229",

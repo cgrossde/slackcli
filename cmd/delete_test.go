@@ -137,7 +137,7 @@ func TestParseDeleteTarget_channelNamePassthrough(t *testing.T) {
 }
 
 func TestParseDeleteTarget_threadReplyURL(t *testing.T) {
-	threadURL := "https://concur-blue.slack.com/archives/C0B3PCPL0CF/p1779023515154839?thread_ts=1779023514.528229&cid=C0B3PCPL0CF"
+	threadURL := "https://myorg.slack.com/archives/C0B3PCPL0CF/p1779023515154839?thread_ts=1779023514.528229&cid=C0B3PCPL0CF"
 	flags := DeleteFlags{}
 	ch, ts, threadTs, err := parseDeleteTarget([]string{threadURL}, flags)
 	if err != nil {

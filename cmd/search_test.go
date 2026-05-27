@@ -910,13 +910,13 @@ func TestFormatSearchResultsJSON_workspaceDiffersFromResolved(t *testing.T) {
 				UserID:    "U1",
 				Ts:        "1.0",
 				Text:      "hello from another ws",
-				Permalink: "https://sap-car.slack.com/archives/C001/p1",
-				Workspace: "sap-car.slack.com",
+				Permalink: "https://otherorg.slack.com/archives/C001/p1",
+				Workspace: "otherorg.slack.com",
 			},
 		},
 	}
 	out := formatSearchResultsJSON(result, nil, "myorg.slack.com")
-	assertContains(t, out, `"workspace":"sap-car.slack.com"`)
+	assertContains(t, out, `"workspace":"otherorg.slack.com"`)
 }
 
 // TestFormatSearchResultsJSON_workspaceEmptyPermalink verifies that the workspace
