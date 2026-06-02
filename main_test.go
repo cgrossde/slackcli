@@ -156,3 +156,41 @@ func TestRun_usersCommandRemoved(t *testing.T) {
 		t.Errorf("expected 'unknown command' error for removed users command, got: %q", combined)
 	}
 }
+
+// TestRun_chats_badType verifies that an unknown --type value produces an
+// error with corrective guidance and an [exit:1] footer, without hitting
+// the keychain or network.
+func TestRun_chats_badType(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := run([]string{"chats", "--type", "bogus"}, &out, &errOut)
+	// WrapWithPresenter formats the error, emits [exit:1] footer to stdout, then
+	// returns errAlreadyPresented so run() propagates it.
+	if err != nil && !strings.Contains(err.Error(), "already presented") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	combined := out.String()
+	if !strings.Contains(combined, "[exit:1") {
+		t.Errorf("expected [exit:1 footer for bad --type, got: %q", combined)
+	}
+	// The bad value appears in the error text embedded in the [exit:1] output.
+	// WrapWithPresenter appends stderr content before the footer.
+	allOutput := out.String() + errOut.String()
+	if !strings.Contains(allOutput, "bogus") {
+		t.Errorf("expected bad value %q mentioned in combined output, got stdout=%q stderr=%q",
+			"bogus", out.String(), errOut.String())
+	}
+}
+
+// TestRun_chats_jsonFlagSuppressesFooter verifies that chats --json bypasses
+// the presenter footer. The command will fail (no credentials), but stdout
+// must not contain the "[exit:N | ...]" footer.
+func TestRun_chats_jsonFlagSuppressesFooter(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := run([]string{"chats", "--json", "--workspace", "nonexistent-ws"}, &out, &errOut)
+	if err != nil && !strings.Contains(err.Error(), "already presented") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out.String(), "[exit:") {
+		t.Errorf("chats --json must not produce presenter footer on stdout, got: %q", out.String())
+	}
+}

@@ -232,15 +232,15 @@ Selected commands expose a `--json` flag that switches the output format from hu
 
 **Errors go to stderr only, exit non-zero.** In JSON mode, error messages are written to stderr as plain text. stdout may be empty or contain partial NDJSON if an error occurs mid-stream. No JSON error object is written to stdout — the stream must remain parseable.
 
-**Pagination trailers (`search`, `activity`).** `search` and `activity` support pagination. When more results exist, the final line of output is a trailer object. For `search`:
+**Pagination trailers (`search`, `activity`, `history`, `chats`).** When more results exist, the final line of output is a trailer object. For `search`:
 ```
 {"_pagination": {"next_page": 2, "has_more": true, "total": 47, "page": 1, "pages": 3}}
 ```
-For `activity`:
+For `activity`, `history`, and `chats`:
 ```
 {"_pagination": {"has_more": true, "next_cursor": "dXNlcjpVMDYx"}}
 ```
-The leading underscore makes `_pagination` unambiguously not a data record. Pass `--page <next_page>` (`search`) or `--cursor <next_cursor>` (`activity`) to fetch the next page. No trailer is emitted on the last page.
+The leading underscore makes `_pagination` unambiguously not a data record. Pass `--page <next_page>` (`search`) or `--cursor <next_cursor>` (`activity`, `history`, `chats`) to fetch the next page. No trailer is emitted on the last page.
 
 **No auto-pagination.** `search` results can be very large. Callers must page explicitly. There is no `--all` flag.
 
@@ -262,7 +262,7 @@ Full field documentation is in each command's doc file. Quick reference:
 | `read --json` | `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `is_root`, `reply_count?`, `channel_id`, `channel_type`, `files?`, `reactions?`, `attachments?` | none |
 | `live --json` | `type`, `subtype`, `channel_id`, `channel_name`, `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `reaction?`, `item_ts?`, `attachments?` | none |
 | `activity --json` | `type`, `feed_ts`, `is_unread`, `channel_id`, `channel_name`, `ts`, `thread_ts?`, `read_ref`, `user_id`, `username`, `display_name`, `text`, `reaction?`, `reactor_id?`, `reactor_name?` | `_pagination` when more items exist |
-| `history --json` | `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `is_root`, `reply_count?`, `channel_id`, `channel_type`, `files?`, `reactions?`, `attachments?` | `_pagination` when more messages exist |
+| `history --json` | `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `is_root`, `reply_count?`, `channel_id`, `channel_type`, `files?`, `reactions?`, `attachments?` | `_pagination` (`next_cursor`) when more messages exist |
 
 ---
 

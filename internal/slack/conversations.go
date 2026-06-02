@@ -1,5 +1,13 @@
-// Package slack — conversations.go implements conversations.history and
-// conversations.replies via slack-go.
+// Package slack — conversations.go implements the conversations API surface:
+//
+//   - conversations.history and conversations.replies via slack-go
+//     (GetMessage, GetThread, GetReply, GetHistory)
+//
+//   - Conversation listing for DMs and MPDMs via raw HTTP POST to
+//     users.conversations (primary) and client.counts (Enterprise Grid fallback),
+//     bypassing slack-go to avoid the enterprise_is_restricted error raised by
+//     the standard conversations.list endpoint on Enterprise Grid workspaces.
+//     (ListConversations, Conversation, ConversationListParams, ConversationListResult)
 package slack
 
 import (
@@ -516,31 +524,13 @@ func (c *Client) listConversationsViaClientCounts(params ConversationListParams)
 
 	// Return all entries unsorted and unresolved. The caller (cmd layer)
 	// sorts by LatestTs, trims to the requested count, then calls
-	// ResolveConversationNames to fill in missing User/Name fields with
+	// resolveConversationMetadata to fill in missing User/Name fields with
 	// minimal conversations.info round-trips.
 	return ConversationListResult{
 		Conversations: convs,
 		HasMore:       false, // client.counts returns all in one shot
 		Cursor:        "",
 	}, nil
-}
-
-// ResolveConversationNames fills in missing User (for DMs) and Name (for
-// MPDMs) fields by calling conversations.info for each entry that lacks them.
-// Call this after sorting and trimming to minimise API round-trips.
-func (c *Client) ResolveConversationNames(convs []Conversation) {
-	for i := range convs {
-		if convs[i].IsIM && convs[i].User == "" {
-			if peerID, err := c.GetChannelName(context.Background(), convs[i].ID); err == nil {
-				convs[i].User = peerID
-			}
-		}
-		if convs[i].IsMpIM && convs[i].Name == "" {
-			if name, err := c.GetChannelName(context.Background(), convs[i].ID); err == nil {
-				convs[i].Name = name
-			}
-		}
-	}
 }
 
 // HistoryParams holds parameters for GetHistory.

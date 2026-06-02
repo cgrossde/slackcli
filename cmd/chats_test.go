@@ -20,7 +20,7 @@ func TestChatsTypes(t *testing.T) {
 		{"im", []string{"im"}, false},
 		{"mpdm", []string{"mpim"}, false},
 		{"mpim", []string{"mpim"}, false},
-		// channel modes are handled by chatsFetchWithChannels, not chatsTypes
+		// channel modes are routed to chatsFetchWithChannels, not chatsTypes
 		{"channel", nil, true},
 		{"all-with-channels", nil, true},
 		{"unread", nil, true},
@@ -68,12 +68,14 @@ func TestResolveMpdmName(t *testing.T) {
 	}
 }
 
-// TestBuildChatEntries verifies sorting by latest_ts descending.
+// TestBuildChatEntries verifies that buildChatEntries preserves the order of
+// its input slice and does NOT sort (sorting is the caller's responsibility).
 func TestBuildChatEntries(t *testing.T) {
+	// Input is pre-sorted descending; we verify the output order is preserved.
 	convs := []slack.Conversation{
-		{ID: "D001", IsIM: true, User: "U001", LatestTs: "1000000000.000000"},
 		{ID: "D002", IsIM: true, User: "U002", LatestTs: "1780000000.000000"},
 		{ID: "C003", IsMpIM: true, Name: "mpdm-a--b-1", LatestTs: "1500000000.000000"},
+		{ID: "D001", IsIM: true, User: "U001", LatestTs: "1000000000.000000"},
 		{ID: "D004", IsIM: true, User: "U004", LatestTs: ""}, // no messages
 	}
 	entries := buildChatEntries(convs, nil)
@@ -81,19 +83,17 @@ func TestBuildChatEntries(t *testing.T) {
 	if len(entries) != 4 {
 		t.Fatalf("expected 4 entries, got %d", len(entries))
 	}
-	// Most recent first.
 	if entries[0].ID != "D002" {
-		t.Errorf("entries[0].ID = %q, want D002", entries[0].ID)
+		t.Errorf("entries[0].ID = %q, want D002 (input order preserved)", entries[0].ID)
 	}
 	if entries[1].ID != "C003" {
-		t.Errorf("entries[1].ID = %q, want C003", entries[1].ID)
+		t.Errorf("entries[1].ID = %q, want C003 (input order preserved)", entries[1].ID)
 	}
 	if entries[2].ID != "D001" {
-		t.Errorf("entries[2].ID = %q, want D001", entries[2].ID)
+		t.Errorf("entries[2].ID = %q, want D001 (input order preserved)", entries[2].ID)
 	}
-	// No-ts entry sorts to bottom.
 	if entries[3].ID != "D004" {
-		t.Errorf("entries[3].ID = %q, want D004 (no ts)", entries[3].ID)
+		t.Errorf("entries[3].ID = %q, want D004 (input order preserved)", entries[3].ID)
 	}
 }
 
@@ -113,13 +113,6 @@ func TestFormatChatsPlain(t *testing.T) {
 	}
 }
 
-// TestChatsCmd_badType verifies the command returns an error for unknown --type.
-func TestChatsCmd_badType(t *testing.T) {
-	_, err := chatsTypes("invalid")
-	if err == nil {
-		t.Fatal("expected error for unknown type, got nil")
-	}
-	if !strings.Contains(err.Error(), "invalid") {
-		t.Errorf("error should mention the bad value: %v", err)
-	}
-}
+// Note: command-layer tests for bad --type and --json footer suppression live in
+// main_test.go (TestRun_chats_badType, TestRun_chats_jsonFlagSuppressesFooter)
+// because they require buildRoot from the main package.

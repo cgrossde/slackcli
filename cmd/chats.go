@@ -1,7 +1,7 @@
 // Package cmd — chats.go implements the "chats" command.
 //
 // Layer 1: Chats lists conversations sorted by most-recently active.
-// Supported types: dm, mpdm, channel, all (DMs+MPDMs only), all-with-channels.
+// Supported types: dm, mpdm, channel, all (DMs+MPDMs only), all-with-channels, unread.
 // Layer 2 wiring (presenter) is applied in main.go.
 package cmd
 
@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,12 +25,12 @@ type ChatsFlags struct {
 	Workspace string
 	Count     int
 	// Type filters output:
-	//   all                — DMs + MPDMs (default, fast via client.counts)
+	//   all                — DMs + MPDMs (default, fast via users.conversations / client.counts)
 	//   dm                 — 1:1 DMs only
 	//   mpdm               — multi-party DMs only
-	//   channel            — joined channels only (slow, via client.counts)
-	//   all-with-channels  — everything (slow)
-	//   unread             — all conversations with has_unreads=true (fast)
+	//   channel            — joined channels only (via client.counts)
+	//   all-with-channels  — DMs + MPDMs + channels
+	//   unread             — all conversations with has_unreads=true
 	Type   string
 	Cursor string
 	JSON   bool
@@ -65,14 +66,7 @@ Credentials must already be saved (run: slackcli auth login).`,
   slackcli chats --type all-with-channels --count 50
   slackcli chats --json`,
 		Args: cobra.NoArgs,
-		RunE: func(c *cobra.Command, args []string) error {
-			if flags.JSON {
-				out, err := ChatsJSON(flags)
-				if out != "" {
-					fmt.Fprint(c.OutOrStdout(), out)
-				}
-				return err
-			}
+		RunE: func(c *cobra.Command, _ []string) error {
 			out, err := Chats(flags)
 			if out != "" {
 				fmt.Fprint(c.OutOrStdout(), out)
@@ -89,18 +83,39 @@ Credentials must already be saved (run: slackcli auth login).`,
 	return cmd
 }
 
-// chatsFetch is the core fetch logic shared by Chats and ChatsJSON.
-func chatsFetch(flags ChatsFlags) ([]chatEntry, slack.ConversationListResult, *slack.UserCache, error) {
+// Chats is the Layer 1 implementation. It fetches conversations and formats
+// the output according to flags.JSON (NDJSON) or plain text.
+func Chats(flags ChatsFlags) (string, error) {
+	entries, result, err := chatsFetch(flags)
+	if err != nil {
+		return "", err
+	}
+	if flags.JSON {
+		return formatChatsJSON(entries, result), nil
+	}
+	return formatChatsPlain(entries, result), nil
+}
+
+// chatsFetch resolves credentials, calls the appropriate API, and returns
+// a sorted, trimmed slice of chatEntry values ready for formatting.
+// The sort happens once here; formatters receive a pre-sorted slice.
+func chatsFetch(flags ChatsFlags) ([]chatEntry, slack.ConversationListResult, error) {
 	workspace, err := resolveWorkspace(flags.Workspace)
 	if err != nil {
-		return nil, slack.ConversationListResult{}, nil, err
+		return nil, slack.ConversationListResult{}, err
 	}
 	_, entry, err := loadCredentials(workspace)
 	if err != nil {
-		return nil, slack.ConversationListResult{}, nil, err
+		return nil, slack.ConversationListResult{}, err
 	}
 	client := slack.NewClient(entry.Token, entry.Cookie)
-	cache, _ := slack.NewUserCache(workspace, client)
+
+	cache, cacheErr := slack.NewUserCache(workspace, client)
+	if cacheErr != nil {
+		slog.Warn("could not load user cache for chats; display names will fall back to raw IDs",
+			"err", cacheErr)
+		cache = nil
+	}
 
 	count := flags.Count
 	if count < 1 {
@@ -113,13 +128,13 @@ func chatsFetch(flags ChatsFlags) ([]chatEntry, slack.ConversationListResult, *s
 
 	// Modes that include channels use client.counts (Enterprise Grid safe).
 	if t == "channel" || t == "all-with-channels" || t == "unread" {
-		return chatsFetchWithChannels(flags, t, count, workspace, client, cache)
+		return chatsFetchWithChannels(t, count, workspace, client, cache)
 	}
 
-	// DM/MPDM-only modes use the existing ListConversations path.
+	// DM/MPDM-only modes use the users.conversations / client.counts path.
 	types, err := chatsTypes(t)
 	if err != nil {
-		return nil, slack.ConversationListResult{}, nil, err
+		return nil, slack.ConversationListResult{}, err
 	}
 	result, err := client.ListConversations(slack.ConversationListParams{
 		Types:     types,
@@ -128,28 +143,32 @@ func chatsFetch(flags ChatsFlags) ([]chatEntry, slack.ConversationListResult, *s
 		Workspace: workspace,
 	})
 	if err != nil {
-		return nil, slack.ConversationListResult{}, nil, fmt.Errorf("listing chats: %w", err)
+		return nil, slack.ConversationListResult{}, fmt.Errorf("listing chats: %w", err)
 	}
 
+	// Sort once here; buildChatEntries does not sort.
 	sortConversationsByLatest(result.Conversations)
 	if len(result.Conversations) > count {
 		result.Conversations = result.Conversations[:count]
 		result.HasMore = false
 	}
-	client.ResolveConversationNames(result.Conversations)
+
+	// Resolve peer IDs and MPDM names for the trimmed set only.
+	resolveConversationMetadata(client, result.Conversations)
+
 	entries := buildChatEntries(result.Conversations, cache)
-	return entries, result, cache, nil
+	return entries, result, nil
 }
 
-// chatsFetchWithChannels handles the channel-aware modes by calling
-// client.counts and optionally resolving names via conversations.info.
-func chatsFetchWithChannels(flags ChatsFlags, t string, count int, workspace string, client *slack.Client, cache *slack.UserCache) ([]chatEntry, slack.ConversationListResult, *slack.UserCache, error) {
+// chatsFetchWithChannels handles the channel-aware modes (channel,
+// all-with-channels, unread) by calling client.counts.
+func chatsFetchWithChannels(t string, count int, workspace string, client *slack.Client, cache *slack.UserCache) ([]chatEntry, slack.ConversationListResult, error) {
 	counts, err := client.GetChannelCounts(workspace)
 	if err != nil {
-		return nil, slack.ConversationListResult{}, nil, fmt.Errorf("listing conversations: %w", err)
+		return nil, slack.ConversationListResult{}, fmt.Errorf("listing conversations: %w", err)
 	}
 
-	// Filter by type.
+	// Filter by requested type.
 	filtered := make([]slack.ChannelInfo, 0, len(counts.All))
 	for _, ch := range counts.All {
 		switch t {
@@ -166,7 +185,7 @@ func chatsFetchWithChannels(flags ChatsFlags, t string, count int, workspace str
 		}
 	}
 
-	// Sort by LatestTs descending, then mentions, then has_unreads.
+	// Sort once: by LatestTs descending, then by mention count, then has_unreads.
 	sort.SliceStable(filtered, func(i, j int) bool {
 		ti, tj := filtered[i].LatestTs, filtered[j].LatestTs
 		if ti != tj {
@@ -188,8 +207,8 @@ func chatsFetchWithChannels(flags ChatsFlags, t string, count int, workspace str
 		filtered = filtered[:count]
 	}
 
-	// Resolve names: for IMs use peer lookup; for channels use conversations.info.
-	// We do this for the trimmed set only to minimise round-trips.
+	// Resolve names for the trimmed set: peer user IDs for IMs,
+	// channel names for regular channels (via conversations.info).
 	ctx := context.Background()
 	for i := range filtered {
 		ch := &filtered[i]
@@ -198,22 +217,24 @@ func chatsFetchWithChannels(flags ChatsFlags, t string, count int, workspace str
 			if err == nil {
 				ch.Name = name
 				if ch.IsIM {
-					ch.User = name // GetChannelName returns peer user ID for DMs
+					// GetChannelName returns peer user ID for DMs, not a display
+					// name; store it in User so resolveUserDisplay can look it up.
+					ch.User = name
 				}
 			}
 		}
 	}
 
-	// Convert to chatEntry.
+	// Convert to chatEntry (no sort here — already sorted above).
 	entries := make([]chatEntry, 0, len(filtered))
 	for _, ch := range filtered {
 		e := chatEntry{
-			ID:        ch.ID,
-			RawName:   ch.Name,
-			PeerID:    ch.User,
-			LatestTs:  ch.LatestTs,
-			IsStarred: ch.IsStarred,
-			HasUnreads: ch.HasUnreads,
+			ID:           ch.ID,
+			RawName:      ch.Name,
+			PeerID:       ch.User,
+			LatestTs:     ch.LatestTs,
+			IsStarred:    ch.IsStarred,
+			HasUnreads:   ch.HasUnreads,
 			MentionCount: ch.MentionCount,
 		}
 		switch {
@@ -235,11 +256,37 @@ func chatsFetchWithChannels(flags ChatsFlags, t string, count int, workspace str
 		entries = append(entries, e)
 	}
 
-	result := slack.ConversationListResult{HasMore: false}
-	return entries, result, cache, nil
+	return entries, slack.ConversationListResult{HasMore: false}, nil
 }
 
-// chatsTypes returns the conversations.list types slice for the given flag value.
+// resolveConversationMetadata fills in missing User (for DMs) and Name (for
+// MPDMs) fields by calling conversations.info for each entry that lacks them.
+// It operates on the trimmed, sorted slice so only displayed entries
+// incur API round-trips.
+//
+// Note: for DMs, conversations.info returns the peer's user ID (not a display
+// name); actual display-name resolution happens later in buildChatEntries via
+// resolveUserDisplay. For MPDMs, it returns the raw mpdm-... name; display
+// formatting happens in resolveMpdmName.
+func resolveConversationMetadata(client *slack.Client, convs []slack.Conversation) {
+	ctx := context.Background()
+	for i := range convs {
+		if convs[i].IsIM && convs[i].User == "" {
+			if peerID, err := client.GetChannelName(ctx, convs[i].ID); err == nil {
+				convs[i].User = peerID
+			}
+		}
+		if convs[i].IsMpIM && convs[i].Name == "" {
+			if name, err := client.GetChannelName(ctx, convs[i].ID); err == nil {
+				convs[i].Name = name
+			}
+		}
+	}
+}
+
+// chatsTypes maps the --type flag to conversations.list type strings.
+// Channel-aware types (channel, all-with-channels, unread) are handled
+// separately by chatsFetchWithChannels and are not valid here.
 func chatsTypes(t string) ([]string, error) {
 	switch t {
 	case "all", "":
@@ -253,7 +300,8 @@ func chatsTypes(t string) ([]string, error) {
 	}
 }
 
-// sortConversationsByLatest sorts conversations by LatestTs descending.
+// sortConversationsByLatest sorts a []slack.Conversation by LatestTs descending.
+// Entries with no LatestTs sort to the bottom.
 func sortConversationsByLatest(convs []slack.Conversation) {
 	sort.SliceStable(convs, func(i, j int) bool {
 		ti, tj := convs[i].LatestTs, convs[j].LatestTs
@@ -267,24 +315,24 @@ func sortConversationsByLatest(convs []slack.Conversation) {
 	})
 }
 
-// chatEntry is a resolved conversation ready for display.
+// chatEntry is a resolved conversation ready for formatting.
 type chatEntry struct {
 	ID           string
 	Type         string // "dm", "mpdm", "channel"
-	Name         string // human-readable
-	RawName      string
-	PeerID       string
-	Members      []string
+	Name         string // human-readable display name
+	RawName      string // Slack's internal name
+	PeerID       string // for DMs: peer user ID
 	MemberIDs    []string
 	LatestTs     string
-	LatestHuman  string
+	LatestHuman  string // formatted for display
 	Priority     float64
 	IsStarred    bool
 	HasUnreads   bool
 	MentionCount int
 }
 
-// buildChatEntries converts Conversation slices (from ListConversations) to chatEntries.
+// buildChatEntries converts a pre-sorted []slack.Conversation to []chatEntry.
+// The input slice must already be sorted — this function does not sort.
 func buildChatEntries(convs []slack.Conversation, cache *slack.UserCache) []chatEntry {
 	entries := make([]chatEntry, 0, len(convs))
 	for _, c := range convs {
@@ -310,23 +358,11 @@ func buildChatEntries(convs []slack.Conversation, cache *slack.UserCache) []chat
 		}
 		entries = append(entries, e)
 	}
-	sort.SliceStable(entries, func(i, j int) bool {
-		ti, tj := entries[i].LatestTs, entries[j].LatestTs
-		if ti == "" && tj == "" {
-			return false
-		}
-		if ti == "" {
-			return false
-		}
-		if tj == "" {
-			return true
-		}
-		return ti > tj
-	})
 	return entries
 }
 
-// resolveUserDisplay returns "@DisplayName" for a user ID.
+// resolveUserDisplay returns "@DisplayName" for a user ID, falling back to
+// "@userID" when the cache is unavailable or the lookup fails.
 func resolveUserDisplay(userID string, cache *slack.UserCache) string {
 	if cache == nil || userID == "" {
 		return "@" + userID
@@ -342,7 +378,7 @@ func resolveUserDisplay(userID string, cache *slack.UserCache) string {
 	return "@" + label
 }
 
-// resolveMpdmName builds a readable name from raw MPDM name or member IDs.
+// resolveMpdmName builds a readable name from a raw MPDM name or member IDs.
 func resolveMpdmName(rawName string, members []string, cache *slack.UserCache) string {
 	if len(members) > 0 && cache != nil {
 		names := make([]string, 0, len(members))
@@ -351,8 +387,8 @@ func resolveMpdmName(rawName string, members []string, cache *slack.UserCache) s
 		}
 		return strings.Join(names, ", ")
 	}
-	name := rawName
-	name = strings.TrimPrefix(name, "mpdm-")
+	name := strings.TrimPrefix(rawName, "mpdm-")
+	// Strip trailing "-N" numeric suffix (e.g. "-1").
 	if idx := strings.LastIndex(name, "-"); idx > 0 {
 		suffix := name[idx+1:]
 		allDigits := true
@@ -366,26 +402,12 @@ func resolveMpdmName(rawName string, members []string, cache *slack.UserCache) s
 			name = name[:idx]
 		}
 	}
-	parts := strings.Split(name, "--")
-	return strings.Join(parts, ", ")
+	return strings.Join(strings.Split(name, "--"), ", ")
 }
 
-// Chats is the Layer 1 plain-text implementation.
-func Chats(flags ChatsFlags) (string, error) {
-	entries, result, _, err := chatsFetch(flags)
-	if err != nil {
-		return "", err
-	}
-	return formatChatsPlain(entries, result), nil
-}
-
-// ChatsJSON is the --json variant.
-func ChatsJSON(flags ChatsFlags) (string, error) {
-	entries, result, _, err := chatsFetch(flags)
-	if err != nil {
-		return "", err
-	}
-
+// formatChatsJSON renders entries as NDJSON. One object per line; optional
+// _pagination trailer when more pages exist.
+func formatChatsJSON(entries []chatEntry, result slack.ConversationListResult) string {
 	type chatJSON struct {
 		ID           string   `json:"id"`
 		Type         string   `json:"type"`
@@ -429,10 +451,10 @@ func ChatsJSON(flags ChatsFlags) (string, error) {
 		sb.WriteByte('\n')
 	}
 
-	return sb.String(), nil
+	return sb.String()
 }
 
-// formatChatsPlain renders the chat list as plain text.
+// formatChatsPlain renders entries as human-readable plain text.
 func formatChatsPlain(entries []chatEntry, result slack.ConversationListResult) string {
 	var b strings.Builder
 
