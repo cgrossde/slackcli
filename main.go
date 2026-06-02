@@ -169,6 +169,12 @@ func buildRoot(stdout, stderr io.Writer) *cobra.Command {
 	}
 	snippetCmd.GroupID = "main"
 	root.AddCommand(snippetCmd)
+
+	chatsCmd := cmd.NewChatsCmd()
+	WrapWithPresenter(chatsCmd, stdout, stderr)
+	chatsCmd.GroupID = "main"
+	root.AddCommand(chatsCmd)
+
 	return root
 }
 

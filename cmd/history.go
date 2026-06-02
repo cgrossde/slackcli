@@ -249,8 +249,8 @@ func HistoryJSON(args []string, flags HistoryFlags) (string, error) {
 	if result.HasMore {
 		trailer, _ := json.Marshal(map[string]any{
 			"_pagination": map[string]any{
-				"has_more": true,
-				"cursor":   result.Cursor,
+				"has_more":    true,
+				"next_cursor": result.Cursor,
 			},
 		})
 		sb.Write(trailer)
