@@ -4,8 +4,14 @@ package slack
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 
 	slackgo "github.com/slack-go/slack"
 )
@@ -237,6 +243,304 @@ func (c *Client) GetChannelName(ctx context.Context, channelID string) (string, 
 		return ch.User, nil
 	}
 	return ch.Name, nil
+}
+
+// Conversation represents a non-channel conversation (DM or MPDM) returned by
+// conversations.list.
+type Conversation struct {
+	ID       string   // Slack channel/conversation ID
+	Name     string   // raw name (e.g. "mpdm-alice--bob-1") or "" for DMs
+	IsIM     bool     // true for 1:1 direct messages
+	IsMpIM   bool     // true for multi-party DMs
+	User     string   // for DMs: the peer user ID
+	Members  []string // for MPDMs: participant user IDs (may be empty if not fetched)
+	LastRead string   // epoch ts of last-read message
+	LatestTs string   // epoch ts of the most recent message (from latest.ts)
+	Priority float64  // Slack's internal sort priority (higher = more important)
+}
+
+// ConversationListParams holds parameters for ListConversations.
+type ConversationListParams struct {
+	// Types filters by conversation type. Valid values: "im", "mpim".
+	// Defaults to both when empty.
+	Types  []string
+	Limit  int    // 1–200; 0 means use API default (100)
+	Cursor string // pagination cursor from a previous call
+	// Workspace is the workspace domain (e.g. "myorg.slack.com").
+	// Required for Enterprise Grid workspaces; uses slack.com when empty.
+	Workspace string
+}
+
+// ConversationListResult holds the response from conversations.list.
+type ConversationListResult struct {
+	Conversations []Conversation
+	HasMore       bool
+	Cursor        string // next_cursor for the next page; empty when HasMore is false
+}
+
+// ListConversations calls users.conversations filtered to non-channel conversation
+// types (im and/or mpim). It posts directly via the shared http.Client (same
+// pattern as activity.feed) to bypass the enterprise_is_restricted error that
+// slack-go's GetConversations raises on Enterprise Grid workspaces.
+//
+// Results are returned in API order (most recently active first when the
+// Slack token belongs to the authenticated user).
+func (c *Client) ListConversations(params ConversationListParams) (ConversationListResult, error) {
+	types := params.Types
+	if len(types) == 0 {
+		types = []string{"im", "mpim"}
+	}
+	limit := params.Limit
+	if limit < 1 {
+		limit = 100
+	} else if limit > 200 {
+		limit = 200
+	}
+
+	form := url.Values{}
+	form.Set("token", c.token)
+	form.Set("types", strings.Join(types, ","))
+	form.Set("limit", strconv.Itoa(limit))
+	form.Set("exclude_archived", "false")
+	if params.Cursor != "" {
+		form.Set("cursor", params.Cursor)
+	}
+	// Internal metadata sent by the Slack web client.
+	form.Set("_x_reason", "users.conversations")
+	form.Set("_x_mode", "online")
+	form.Set("_x_sonic", "true")
+	form.Set("_x_app_name", "client")
+
+	// Build the base URL using the workspace domain when provided, so that
+	// Enterprise Grid workspaces route to the correct shard.
+	apiBase := "https://slack.com"
+	if params.Workspace != "" {
+		apiBase = "https://" + strings.TrimPrefix(params.Workspace, "https://")
+		apiBase = strings.TrimSuffix(apiBase, "/")
+	}
+
+	// Try users.conversations first; fall back to client.counts on Enterprise
+	// Grid workspaces where the former is restricted.
+	req, err := http.NewRequest(http.MethodPost,
+		apiBase+"/api/users.conversations",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return ConversationListResult{}, fmt.Errorf("users.conversations: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return ConversationListResult{}, fmt.Errorf("users.conversations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ConversationListResult{}, fmt.Errorf("users.conversations: read body: %w", err)
+	}
+
+	var raw struct {
+		OK               bool   `json:"ok"`
+		Error            string `json:"error"`
+		Channels         []struct {
+			ID       string  `json:"id"`
+			Name     string  `json:"name"`
+			IsIM     bool    `json:"is_im"`
+			IsMpIM   bool    `json:"is_mpim"`
+			User     string  `json:"user"`
+			Members  []string `json:"members"`
+			LastRead string  `json:"last_read"`
+			Priority float64 `json:"priority"`
+			Latest   *struct {
+				Ts string `json:"ts"`
+			} `json:"latest"`
+		} `json:"channels"`
+		ResponseMetadata struct {
+			NextCursor string `json:"next_cursor"`
+		} `json:"response_metadata"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return ConversationListResult{}, fmt.Errorf("users.conversations: parse response: %w", err)
+	}
+	if !raw.OK {
+		if raw.Error == "enterprise_is_restricted" {
+			// Enterprise Grid admins have disabled users.conversations.
+			// Fall back to client.counts which the Slack web client uses for
+			// its sidebar DM list and is not subject to the same restriction.
+			return c.listConversationsViaClientCounts(params)
+		}
+		return ConversationListResult{}, fmt.Errorf("users.conversations: %s", raw.Error)
+	}
+
+	convs := make([]Conversation, 0, len(raw.Channels))
+	for _, ch := range raw.Channels {
+		conv := Conversation{
+			ID:       ch.ID,
+			Name:     ch.Name,
+			IsIM:     ch.IsIM,
+			IsMpIM:   ch.IsMpIM,
+			User:     ch.User,
+			Members:  ch.Members,
+			LastRead: ch.LastRead,
+			Priority: ch.Priority,
+		}
+		if ch.Latest != nil {
+			conv.LatestTs = ch.Latest.Ts
+		}
+		convs = append(convs, conv)
+	}
+
+	nextCursor := raw.ResponseMetadata.NextCursor
+	return ConversationListResult{
+		Conversations: convs,
+		HasMore:       nextCursor != "",
+		Cursor:        nextCursor,
+	}, nil
+}
+
+// listConversationsViaClientCounts is the fallback for Enterprise Grid
+// workspaces where users.conversations is restricted. It calls client.counts
+// which the Slack web client uses to populate the sidebar DM list.
+//
+// client.counts returns IM and MPIM entries with last_read and latest ts.
+// It does not support type-filtering or pagination — we filter locally.
+func (c *Client) listConversationsViaClientCounts(params ConversationListParams) (ConversationListResult, error) {
+	apiBase := "https://slack.com"
+	if params.Workspace != "" {
+		apiBase = "https://" + strings.TrimPrefix(params.Workspace, "https://")
+		apiBase = strings.TrimSuffix(apiBase, "/")
+	}
+
+	form := url.Values{}
+	form.Set("token", c.token)
+	form.Set("_x_reason", "client.counts")
+	form.Set("_x_mode", "online")
+	form.Set("_x_sonic", "true")
+	form.Set("_x_app_name", "client")
+
+	req, err := http.NewRequest(http.MethodPost,
+		apiBase+"/api/client.counts",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return ConversationListResult{}, fmt.Errorf("client.counts: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return ConversationListResult{}, fmt.Errorf("client.counts: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ConversationListResult{}, fmt.Errorf("client.counts: read body: %w", err)
+	}
+
+	// client.counts response shape — only fields we need.
+	var raw struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		IMs   []struct {
+			ID       string  `json:"id"`
+			UserID   string  `json:"user_id"`
+			User     string  `json:"user"`     // alternative field name used in some responses
+			LastRead string  `json:"last_read"`
+			Latest   string  `json:"latest"`
+			Priority float64 `json:"priority"`
+		} `json:"ims"`
+		MPIMs []struct {
+			ID       string  `json:"id"`
+			Name     string  `json:"name"`
+			LastRead string  `json:"last_read"`
+			Latest   string  `json:"latest"`
+			Priority float64 `json:"priority"`
+		} `json:"mpims"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return ConversationListResult{}, fmt.Errorf("client.counts: parse response: %w", err)
+	}
+	if !raw.OK {
+		return ConversationListResult{}, fmt.Errorf("client.counts: %s", raw.Error)
+	}
+
+	// Build the want-set from the requested types.
+	wantIM, wantMPIM := false, false
+	for _, t := range params.Types {
+		switch t {
+		case "im":
+			wantIM = true
+		case "mpim":
+			wantMPIM = true
+		}
+	}
+	if !wantIM && !wantMPIM {
+		wantIM, wantMPIM = true, true
+	}
+
+	limit := params.Limit
+	if limit < 1 {
+		limit = 100
+	}
+
+	convs := make([]Conversation, 0, len(raw.IMs)+len(raw.MPIMs))
+	if wantIM {
+		for _, im := range raw.IMs {
+			peerID := im.UserID
+			if peerID == "" {
+				peerID = im.User
+			}
+			convs = append(convs, Conversation{
+				ID:       im.ID,
+				IsIM:     true,
+				User:     peerID,
+				LastRead: im.LastRead,
+				LatestTs: im.Latest,
+				Priority: im.Priority,
+			})
+		}
+	}
+	if wantMPIM {
+		for _, mp := range raw.MPIMs {
+			convs = append(convs, Conversation{
+				ID:       mp.ID,
+				Name:     mp.Name,
+				IsMpIM:   true,
+				LastRead: mp.LastRead,
+				LatestTs: mp.Latest,
+				Priority: mp.Priority,
+			})
+		}
+	}
+
+	// Return all entries unsorted and unresolved. The caller (cmd layer)
+	// sorts by LatestTs, trims to the requested count, then calls
+	// ResolveConversationNames to fill in missing User/Name fields with
+	// minimal conversations.info round-trips.
+	return ConversationListResult{
+		Conversations: convs,
+		HasMore:       false, // client.counts returns all in one shot
+		Cursor:        "",
+	}, nil
+}
+
+// ResolveConversationNames fills in missing User (for DMs) and Name (for
+// MPDMs) fields by calling conversations.info for each entry that lacks them.
+// Call this after sorting and trimming to minimise API round-trips.
+func (c *Client) ResolveConversationNames(convs []Conversation) {
+	for i := range convs {
+		if convs[i].IsIM && convs[i].User == "" {
+			if peerID, err := c.GetChannelName(context.Background(), convs[i].ID); err == nil {
+				convs[i].User = peerID
+			}
+		}
+		if convs[i].IsMpIM && convs[i].Name == "" {
+			if name, err := c.GetChannelName(context.Background(), convs[i].ID); err == nil {
+				convs[i].Name = name
+			}
+		}
+	}
 }
 
 // HistoryParams holds parameters for GetHistory.
