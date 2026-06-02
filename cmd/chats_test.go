@@ -20,6 +20,10 @@ func TestChatsTypes(t *testing.T) {
 		{"im", []string{"im"}, false},
 		{"mpdm", []string{"mpim"}, false},
 		{"mpim", []string{"mpim"}, false},
+		// channel modes are handled by chatsFetchWithChannels, not chatsTypes
+		{"channel", nil, true},
+		{"all-with-channels", nil, true},
+		{"unread", nil, true},
 		{"bad", nil, true},
 	}
 	for _, tc := range tests {
@@ -111,9 +115,6 @@ func TestFormatChatsPlain(t *testing.T) {
 
 // TestChatsCmd_badType verifies the command returns an error for unknown --type.
 func TestChatsCmd_badType(t *testing.T) {
-	// This exercises the flag-parsing path without reaching keychain.
-	// We call chatsFetch indirectly by checking chatsTypes returns error first,
-	// which avoids any keychain or network access.
 	_, err := chatsTypes("invalid")
 	if err == nil {
 		t.Fatal("expected error for unknown type, got nil")
