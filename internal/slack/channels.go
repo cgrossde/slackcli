@@ -7,8 +7,7 @@
 //                    Used every cycle to discover what has unread activity.
 //
 //   client.userBoot — slower; returns full channel metadata (name, is_private,
-//                     is_starred, is_mpim, is_im). Used for the one-time slow
-//                     scan that populates the channel list for the sap2date UI.
+//                     is_starred, is_mpim, is_im).
 package slack
 
 import (
