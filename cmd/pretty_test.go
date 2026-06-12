@@ -21,7 +21,7 @@ func renderOneMessage(t *testing.T, m slack.Message) string {
 	if err != nil {
 		t.Fatalf("newPrettyRenderer: %v", err)
 	}
-	out, err := pr.renderMessage(m, nil)
+	out, err := pr.renderMessage(m, nil, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -94,6 +94,37 @@ func TestRenderMessage_reactions(t *testing.T) {
 	}
 	if !strings.Contains(got, "1") {
 		t.Errorf("missing count 1 in: %q", got)
+	}
+	// No (you) annotation when selfID is empty.
+	if strings.Contains(got, "(you") {
+		t.Errorf("unexpected (you) annotation when selfID empty: %q", got)
+	}
+}
+
+func TestRenderMessage_reactionsSelfAnnotation(t *testing.T) {
+	pr, err := newPrettyRenderer(true)
+	if err != nil {
+		t.Fatalf("newPrettyRenderer: %v", err)
+	}
+	m := slack.Message{
+		User: "U1",
+		Ts:   "1700000000.000001",
+		Text: "nice",
+		Reactions: []slack.Reaction{
+			{Name: "thumbsup", Count: 3, Users: []string{"USELF", "U2", "U3"}},
+			{Name: "ok_hand", Count: 1, Users: []string{"USELF"}},
+		},
+	}
+	out, err := pr.renderMessage(m, nil, "USELF")
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	got := stripANSI(out)
+	if !strings.Contains(got, "you + 2 others") {
+		t.Errorf("expected 'you + 2 others' annotation: %q", got)
+	}
+	if !strings.Contains(got, "1 (you)") {
+		t.Errorf("expected '1 (you)' annotation: %q", got)
 	}
 }
 

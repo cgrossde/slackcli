@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -296,9 +297,16 @@ func ReadMessage(ref, workspace, threadTs string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	messages, cache, resolvedWS, err := fetchThread(resolved)
+	messages, cache, client, resolvedWS, err := fetchThreadWithClient(resolved)
 	if err != nil {
 		return "", err
+	}
+
+	selfID := ""
+	if client != nil {
+		if auth, authErr := client.AuthTest(); authErr == nil && auth.OK {
+			selfID = auth.UserID
+		}
 	}
 
 	var b strings.Builder
@@ -309,7 +317,7 @@ func ReadMessage(ref, workspace, threadTs string) (string, error) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(formatMessage(m, i, cache))
+		b.WriteString(formatMessage(m, i, cache, selfID))
 	}
 	return b.String(), nil
 }
@@ -331,7 +339,13 @@ func ReadMessagePretty(ref, workspace, threadTs string) (string, error) {
 	if supportsInlineImages() {
 		fetcher = client.FetchFileBytes
 	}
-	out, err := PrettyThread(messages, cache, fetcher)
+	selfID := ""
+	if client != nil {
+		if auth, authErr := client.AuthTest(); authErr == nil && auth.OK {
+			selfID = auth.UserID
+		}
+	}
+	out, err := PrettyThread(messages, cache, fetcher, selfID)
 	if err != nil {
 		return "", err
 	}
@@ -344,12 +358,13 @@ func ReadMessagePretty(ref, workspace, threadTs string) (string, error) {
 // formatMessage renders a single message as plain text suitable for LLM consumption.
 // index is the 0-based position in the thread (0 = root, ≥1 = reply).
 // cache resolves user IDs to display names; nil is safe (falls back to raw ID).
+// selfID is the authenticated user's Slack user ID; pass "" to skip self-annotation.
 //
 // Header format (exactly 120 chars):
 //
 //	== <author> <ts> ═══…═══[ message ]==
 //	== <author> <ts> ═══…═══[ reply N ]==
-func formatMessage(m slack.Message, index int, cache *slack.UserCache) string {
+func formatMessage(m slack.Message, index int, cache *slack.UserCache, selfID string) string {
 	var b strings.Builder
 
 	// Right anchor: "[ message ]==" or "[ reply N ]=="
@@ -411,12 +426,7 @@ func formatMessage(m slack.Message, index int, cache *slack.UserCache) string {
 	// Reactions — one line: "  Reactions: :thumbsup: ×3  :ok: ×1"
 	if len(m.Reactions) > 0 {
 		b.WriteString("  Reactions: ")
-		for i, r := range m.Reactions {
-			if i > 0 {
-				b.WriteString("  ")
-			}
-			fmt.Fprintf(&b, ":%s: ×%d", r.Name, r.Count)
-		}
+		b.WriteString(formatReactions(m.Reactions, selfID))
 		b.WriteByte('\n')
 	}
 
@@ -452,6 +462,37 @@ func formatMessage(m slack.Message, index int, cache *slack.UserCache) string {
 	}
 
 	b.WriteString("\n")
+	return b.String()
+}
+
+// formatReactions formats a slice of reactions as a compact string.
+// If selfID is non-empty and appears in a reaction's Users list, the count
+// is annotated: "×1 (you)", "×4 (you + 3 others)"; bare "×N" when the
+// authenticated user did not react.
+func formatReactions(reactions []slack.Reaction, selfID string) string {
+	var b strings.Builder
+	for i, r := range reactions {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		isSelf := false
+		if selfID != "" {
+			for _, uid := range r.Users {
+				if uid == selfID {
+					isSelf = true
+					break
+				}
+			}
+		}
+		switch {
+		case isSelf && r.Count == 1:
+			fmt.Fprintf(&b, ":%s: ×1 (you)", r.Name)
+		case isSelf:
+			fmt.Fprintf(&b, ":%s: ×%d (you + %d others)", r.Name, r.Count, r.Count-1)
+		default:
+			fmt.Fprintf(&b, ":%s: ×%d", r.Name, r.Count)
+		}
+	}
 	return b.String()
 }
 
@@ -719,5 +760,9 @@ func downloadFile(client fileClient, ref slack.FileRef, outputPath string) (stri
 		return "", fmt.Errorf("writing %s: %w", dest, err)
 	}
 
-	return fmt.Sprintf("Saved: %s (%d bytes)\n", dest, len(data)), nil
+	absPath, err := filepath.Abs(dest)
+	if err != nil {
+		absPath = dest // fallback; extremely unlikely
+	}
+	return fmt.Sprintf("Saved: %s (%d bytes)\n", absPath, len(data)), nil
 }

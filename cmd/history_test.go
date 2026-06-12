@@ -232,7 +232,7 @@ func TestDateToEpoch_relativeDate(t *testing.T) {
 
 func TestFormatHistoryPlain_empty(t *testing.T) {
 	result := slack.HistoryResult{Messages: nil, HasMore: false}
-	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil)
+	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil, "")
 	if !strings.Contains(out, "0 messages") {
 		t.Errorf("expected '0 messages' in output, got: %q", out)
 	}
@@ -243,7 +243,7 @@ func TestFormatHistoryPlain_singleMessage(t *testing.T) {
 		Messages: []slack.Message{{Text: "hello world", Ts: "1000000000.000001"}},
 		HasMore:  false,
 	}
-	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil)
+	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil, "")
 	if !strings.Contains(out, "hello world") {
 		t.Errorf("expected message body in output, got: %q", out)
 	}
@@ -258,7 +258,7 @@ func TestFormatHistoryPlain_pluralMessages(t *testing.T) {
 		msgs[i] = slack.Message{Text: fmt.Sprintf("msg %d", i), Ts: "1000000000.000001"}
 	}
 	result := slack.HistoryResult{Messages: msgs, HasMore: false}
-	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil)
+	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil, "")
 	if !strings.Contains(out, "3 messages") {
 		t.Errorf("expected '3 messages' footer, got: %q", out)
 	}
@@ -270,7 +270,7 @@ func TestFormatHistoryPlain_hasMoreFooter(t *testing.T) {
 		msgs[i] = slack.Message{Text: fmt.Sprintf("msg %d", i), Ts: "1000000000.000001"}
 	}
 	result := slack.HistoryResult{Messages: msgs, HasMore: true, Cursor: "nextcursor123"}
-	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil)
+	out := formatHistoryPlain(result, "C0B3Z1KT80K", nil, "")
 	if !strings.Contains(out, "has_more: true") {
 		t.Errorf("expected has_more:true in output, got: %q", out)
 	}
@@ -281,7 +281,7 @@ func TestFormatHistoryPlain_hasMoreFooter(t *testing.T) {
 
 func TestFormatHistoryMessage_replyCount(t *testing.T) {
 	m := slack.Message{Text: "thread root", Ts: "1000000000.000001", ReplyCount: 3}
-	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil)
+	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil, "")
 	if !strings.Contains(out, "[3 replies]") {
 		t.Errorf("expected '[3 replies]' in output, got: %q", out)
 	}
@@ -289,7 +289,7 @@ func TestFormatHistoryMessage_replyCount(t *testing.T) {
 
 func TestFormatHistoryMessage_singleReply(t *testing.T) {
 	m := slack.Message{Text: "thread root", Ts: "1000000000.000001", ReplyCount: 1}
-	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil)
+	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil, "")
 	if !strings.Contains(out, "[1 reply]") {
 		t.Errorf("expected singular '[1 reply]' label, got: %q", out)
 	}
@@ -297,7 +297,7 @@ func TestFormatHistoryMessage_singleReply(t *testing.T) {
 
 func TestFormatHistoryMessage_noReplyCount(t *testing.T) {
 	m := slack.Message{Text: "simple message", Ts: "1000000000.000001", ReplyCount: 0}
-	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil)
+	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil, "")
 	if strings.Contains(out, "repl") {
 		t.Errorf("expected no reply indicator for 0 replies, got: %q", out)
 	}
@@ -305,7 +305,7 @@ func TestFormatHistoryMessage_noReplyCount(t *testing.T) {
 
 func TestFormatHistoryMessage_headerWidth(t *testing.T) {
 	m := slack.Message{Text: "body", Ts: "1718197925.000000", User: "U123"}
-	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil)
+	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil, "")
 	// The first line is the header; it must be exactly 120 chars + newline.
 	lines := strings.SplitN(out, "\n", 2)
 	if len(lines[0]) != 120 {
@@ -315,7 +315,7 @@ func TestFormatHistoryMessage_headerWidth(t *testing.T) {
 
 func TestFormatHistoryMessage_readRef(t *testing.T) {
 	m := slack.Message{Text: "hello", Ts: "1718197925.001234"}
-	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil)
+	out := formatHistoryMessage(m, "C0B3Z1KT80K", nil, "")
 	want := "  → slackcli read C0B3Z1KT80K:1718197925.001234"
 	if !strings.Contains(out, want) {
 		t.Errorf("expected read ref %q in output, got: %q", want, out)

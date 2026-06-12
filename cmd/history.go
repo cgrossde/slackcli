@@ -135,7 +135,7 @@ func resolveHistoryChannelArg(arg string) (channelID, workspace string, err erro
 // History is the Layer 1 implementation. It resolves credentials, calls the
 // API, and returns formatted plain-text output.
 func History(args []string, flags HistoryFlags) (string, error) {
-	_, channelID, _, cache, result, err := historyFetch(args, flags)
+	_, channelID, client, cache, result, err := historyFetch(args, flags)
 	if err != nil {
 		return "", err
 	}
@@ -147,7 +147,13 @@ func History(args []string, flags HistoryFlags) (string, error) {
 			}
 		}
 	}
-	return formatHistoryPlain(result, channelID, cache), nil
+	selfID := ""
+	if client != nil {
+		if auth, authErr := client.AuthTest(); authErr == nil && auth.OK {
+			selfID = auth.UserID
+		}
+	}
+	return formatHistoryPlain(result, channelID, cache, selfID), nil
 }
 
 // HistoryPretty is the --pretty variant of History.
@@ -160,7 +166,13 @@ func HistoryPretty(args []string, flags HistoryFlags) (string, error) {
 	if supportsInlineImages() {
 		fetcher = client.FetchFileBytes
 	}
-	out, err := PrettyThread(result.Messages, cache, fetcher)
+	selfID := ""
+	if client != nil {
+		if auth, authErr := client.AuthTest(); authErr == nil && auth.OK {
+			selfID = auth.UserID
+		}
+	}
+	out, err := PrettyThread(result.Messages, cache, fetcher, selfID)
 	if err != nil {
 		return "", err
 	}
@@ -443,13 +455,13 @@ func dateToEpoch(input string) (string, error) {
 }
 
 // formatHistoryPlain renders the HistoryResult as plain text.
-func formatHistoryPlain(result slack.HistoryResult, channelID string, cache *slack.UserCache) string {
+func formatHistoryPlain(result slack.HistoryResult, channelID string, cache *slack.UserCache, selfID string) string {
 	var b strings.Builder
 	for i, m := range result.Messages {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(formatHistoryMessage(m, channelID, cache))
+		b.WriteString(formatHistoryMessage(m, channelID, cache, selfID))
 	}
 	b.WriteString(formatHistoryFooter(result, channelID, true))
 	return b.String()
@@ -458,7 +470,7 @@ func formatHistoryPlain(result slack.HistoryResult, channelID string, cache *sla
 // formatHistoryMessage renders a single history message as plain text.
 // It mirrors formatMessage from read.go but uses "[ message ]" label for all
 // entries (no thread index) and shows a [N replies] indicator for thread roots.
-func formatHistoryMessage(m slack.Message, channelID string, cache *slack.UserCache) string {
+func formatHistoryMessage(m slack.Message, channelID string, cache *slack.UserCache, selfID string) string {
 	var b strings.Builder
 
 	label := "[ message ]=="
@@ -513,12 +525,7 @@ func formatHistoryMessage(m slack.Message, channelID string, cache *slack.UserCa
 
 	if len(m.Reactions) > 0 {
 		b.WriteString("  Reactions: ")
-		for i, r := range m.Reactions {
-			if i > 0 {
-				b.WriteString("  ")
-			}
-			fmt.Fprintf(&b, ":%s: ×%d", r.Name, r.Count)
-		}
+		b.WriteString(formatReactions(m.Reactions, selfID))
 		b.WriteByte('\n')
 	}
 

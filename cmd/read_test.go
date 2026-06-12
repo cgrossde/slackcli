@@ -24,7 +24,7 @@ func TestFormatMessage_headerLine(t *testing.T) {
 	}
 
 	// nil cache → raw user ID in header
-	got := formatMessage(msg, 0, nil)
+	got := formatMessage(msg, 0, nil, "")
 	lines := strings.SplitN(got, "\n", 3)
 	header := lines[0]
 
@@ -39,7 +39,7 @@ func TestFormatMessage_headerLine(t *testing.T) {
 	}
 
 	// index 1 → reply label at end
-	got2 := formatMessage(msg, 1, nil)
+	got2 := formatMessage(msg, 1, nil, "")
 	header2 := strings.SplitN(got2, "\n", 2)[0]
 	if len(header2) != 120 {
 		t.Errorf("reply header length = %d, want 120; got: %q", len(header2), header2)
@@ -69,7 +69,7 @@ func TestFormatMessage_withCache(t *testing.T) {
 		Text: "hello <@UXYZ987GHI> and <@UNKNOWN>",
 	}
 
-	got := formatMessage(msg, 0, cache)
+	got := formatMessage(msg, 0, cache, "")
 	header := strings.SplitN(got, "\n", 2)[0]
 
 	if len(header) != 120 {
@@ -88,7 +88,7 @@ func TestFormatMessage_withCache(t *testing.T) {
 
 func TestFormatMessage_unparsableTs(t *testing.T) {
 	msg := slack.Message{User: "U123", Ts: "not-a-ts", Text: "x"}
-	got := formatMessage(msg, 0, nil)
+	got := formatMessage(msg, 0, nil, "")
 	header := strings.SplitN(got, "\n", 2)[0]
 	if len(header) != 120 {
 		t.Errorf("header length = %d, want 120; got: %q", len(header), header)
@@ -378,7 +378,7 @@ func TestFormatMessage_files(t *testing.T) {
 			},
 		},
 	}
-	got := formatMessage(msg, 0, nil)
+	got := formatMessage(msg, 0, nil, "")
 	if !strings.Contains(got, "[file] report.pdf (PDF)") {
 		t.Errorf("missing file line in: %q", got)
 	}
@@ -400,7 +400,7 @@ func TestFormatMessage_fileNoType(t *testing.T) {
 			{Name: "data.bin", URLPrivate: "https://files.slack.com/data.bin"},
 		},
 	}
-	got := formatMessage(msg, 0, nil)
+	got := formatMessage(msg, 0, nil, "")
 	if !strings.Contains(got, "[file] data.bin") {
 		t.Errorf("missing file line in: %q", got)
 	}
@@ -422,18 +422,61 @@ func TestFormatMessage_reactions(t *testing.T) {
 			{Name: "ok_hand",  Count: 1, Users: []string{"U2"}},
 		},
 	}
-	got := formatMessage(msg, 0, nil)
+	// No selfID — bare counts.
+	got := formatMessage(msg, 0, nil, "")
 	if !strings.Contains(got, "Reactions: :thumbsup: ×5") {
 		t.Errorf("missing 'Reactions:' prefix + thumbsup in: %q", got)
 	}
 	if !strings.Contains(got, ":ok_hand: ×1") {
 		t.Errorf("missing ok_hand reaction in: %q", got)
 	}
+
+	// selfID matches one reaction (count 5) → "you + 4 others"
+	got2 := formatMessage(msg, 0, nil, "U2")
+	if !strings.Contains(got2, ":thumbsup: ×5 (you + 4 others)") {
+		t.Errorf("expected 'you + 4 others' annotation: %q", got2)
+	}
+	// selfID is sole reactor (count 1) → "you"
+	if !strings.Contains(got2, ":ok_hand: ×1 (you)") {
+		t.Errorf("expected '(you)' annotation for sole reaction: %q", got2)
+	}
+	// Reaction not involving selfID remains bare.
+	got3 := formatMessage(msg, 0, nil, "U99")
+	if !strings.Contains(got3, ":thumbsup: ×5") || strings.Contains(got3, "(you") {
+		t.Errorf("expected bare count when selfID not in reaction: %q", got3)
+	}
+}
+
+func TestFormatReactions(t *testing.T) {
+	reactions := []slack.Reaction{
+		{Name: "wave", Count: 1, Users: []string{"USELF"}},
+		{Name: "fire", Count: 3, Users: []string{"USELF", "U2", "U3"}},
+		{Name: "eyes", Count: 2, Users: []string{"U2", "U3"}},
+	}
+	got := formatReactions(reactions, "USELF")
+	if !strings.Contains(got, ":wave: ×1 (you)") {
+		t.Errorf("expected '(you)' for sole reaction: %q", got)
+	}
+	if !strings.Contains(got, ":fire: ×3 (you + 2 others)") {
+		t.Errorf("expected 'you + 2 others': %q", got)
+	}
+	if !strings.Contains(got, ":eyes: ×2") {
+		t.Errorf("expected bare :eyes: ×2: %q", got)
+	}
+	if strings.Contains(got, ":eyes: ×2 (you") {
+		t.Errorf("unexpected (you) annotation on :eyes: reaction: %q", got)
+	}
+
+	// Empty selfID → all bare.
+	got2 := formatReactions(reactions, "")
+	if strings.Contains(got2, "(you") {
+		t.Errorf("unexpected (you) annotation when selfID empty: %q", got2)
+	}
 }
 
 func TestFormatMessage_noFilesNoReactions(t *testing.T) {
 	msg := slack.Message{User: "U1", Ts: "1700000000.000001", Text: "plain"}
-	got := formatMessage(msg, 0, nil)
+	got := formatMessage(msg, 0, nil, "")
 	if strings.Contains(got, "[file]") {
 		t.Errorf("unexpected [file] in: %q", got)
 	}
@@ -496,7 +539,7 @@ func TestFormatMessage_fileURLPrivateHint(t *testing.T) {
 			{Name: "data.bin", URLPrivate: "https://files.slack.com/data.bin"},
 		},
 	}
-	got := formatMessage(msg, 0, nil)
+	got := formatMessage(msg, 0, nil, "")
 	if !strings.Contains(got, "→ slackcli read https://files.slack.com/data.bin") {
 		t.Errorf("expected url_private hint in: %q", got)
 	}

@@ -190,7 +190,7 @@ func hasPrintable(s string) bool {
 // PrettyThread renders messages as a human-readable, ANSI-styled block.
 // fileFetcher, when non-nil, is called to download image file attachments for
 // inline rendering (iTerm2 protocol). Pass nil to skip image rendering.
-func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher func(url string) ([]byte, string, error)) (string, error) {
+func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher func(url string) ([]byte, string, error), selfID string) (string, error) {
 	hasDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 	pr, err := newPrettyRenderer(hasDark)
 	if err != nil {
@@ -203,7 +203,7 @@ func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher 
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		rendered, err := pr.renderMessage(m, cache)
+		rendered, err := pr.renderMessage(m, cache, selfID)
 		if err != nil {
 			return "", fmt.Errorf("rendering message %d: %w", i, err)
 		}
@@ -212,7 +212,7 @@ func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher 
 	return b.String(), nil
 }
 
-func (pr *prettyRenderer) renderMessage(m slack.Message, cache *slack.UserCache) (string, error) {
+func (pr *prettyRenderer) renderMessage(m slack.Message, cache *slack.UserCache, selfID string) (string, error) {
 	var b strings.Builder
 
 	// ── Header line — filled to 120 cols with headerBg background ────────────
@@ -317,8 +317,24 @@ func (pr *prettyRenderer) renderMessage(m slack.Message, cache *slack.UserCache)
 			if i > 0 {
 				b.WriteString("  ")
 			}
+			isSelf := false
+			if selfID != "" {
+				for _, uid := range r.Users {
+					if uid == selfID {
+						isSelf = true
+						break
+					}
+				}
+			}
 			emoji := goemoji.Sprint(":" + r.Name + ":")
-			fmt.Fprintf(&b, "%s %d", emoji, r.Count)
+			switch {
+			case isSelf && r.Count == 1:
+				fmt.Fprintf(&b, "%s 1 (you)", emoji)
+			case isSelf:
+				fmt.Fprintf(&b, "%s %d (you + %d others)", emoji, r.Count, r.Count-1)
+			default:
+				fmt.Fprintf(&b, "%s %d", emoji, r.Count)
+			}
 		}
 		b.WriteByte('\n')
 	}
