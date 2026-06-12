@@ -162,6 +162,7 @@ func ParseChannelTs(raw string) (MessageRef, error) {
 		if err := validateTs(threadTs, raw); err != nil {
 			return MessageRef{}, err
 		}
+		threadTs = normalizeTs(threadTs)
 	} else {
 		ts = rest
 	}
@@ -169,6 +170,7 @@ func ParseChannelTs(raw string) (MessageRef, error) {
 	if err := validateTs(ts, raw); err != nil {
 		return MessageRef{}, err
 	}
+	ts = normalizeTs(ts)
 
 	return MessageRef{
 		ChannelID: channelID,
@@ -177,14 +179,42 @@ func ParseChannelTs(raw string) (MessageRef, error) {
 	}, nil
 }
 
+// normalizeTs converts a dot-free p-form timestamp (e.g. "1780412248027909")
+// to the API form ("1780412248.027909"). Timestamps that already contain a dot
+// are returned unchanged. It must only be called after validateTs succeeds.
+func normalizeTs(ts string) string {
+	if strings.IndexByte(ts, '.') >= 0 {
+		return ts
+	}
+	return ts[:len(ts)-6] + "." + ts[len(ts)-6:]
+}
+
 // validateTs checks that ts is a valid Slack timestamp (digits around a single dot).
+// It also accepts the dot-free "p-form" digit string that Slack uses in permalink
+// URLs and that users paste directly (e.g. "1780412248027909"), normalising it to
+// "1780412248.027909" by treating the last 6 digits as the fractional part — the
+// same rule ParseSlackURL applies to the <pTIMESTAMP> path segment.
 func validateTs(ts, raw string) error {
+	// Fast path: already contains a dot — validate the conventional form.
 	dotIdx := strings.IndexByte(ts, '.')
-	if dotIdx < 1 || dotIdx == len(ts)-1 {
+	if dotIdx >= 0 {
+		if dotIdx < 1 || dotIdx == len(ts)-1 {
+			return fmt.Errorf("invalid channel:ts %q: timestamp %q must contain '.' with digits on both sides", raw, ts)
+		}
+		for _, r := range ts {
+			if r != '.' && (r < '0' || r > '9') {
+				return fmt.Errorf("invalid channel:ts %q: timestamp %q contains non-numeric character", raw, ts)
+			}
+		}
+		return nil
+	}
+
+	// No dot: accept an all-digit string with more than 6 digits (p-form convention).
+	if len(ts) <= 6 {
 		return fmt.Errorf("invalid channel:ts %q: timestamp %q must contain '.' with digits on both sides", raw, ts)
 	}
 	for _, r := range ts {
-		if r != '.' && (r < '0' || r > '9') {
+		if r < '0' || r > '9' {
 			return fmt.Errorf("invalid channel:ts %q: timestamp %q contains non-numeric character", raw, ts)
 		}
 	}

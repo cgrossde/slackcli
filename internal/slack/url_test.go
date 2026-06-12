@@ -121,6 +121,20 @@ func TestParseChannelTs_valid(t *testing.T) {
 			wantCh: "W4UDRQJNR",
 			wantTs: "1700000000.000001",
 		},
+		{
+			// dot-free "p-form": Slack permalink segment without leading 'p'
+			name:   "p-form timestamp no dot",
+			input:  "C0ADA6J8W2Y:1780412248027909",
+			wantCh: "C0ADA6J8W2Y",
+			wantTs: "1780412248.027909",
+		},
+		{
+			// p-form with minimal fractional digits
+			name:   "p-form timestamp minimal",
+			input:  "C012ABC:1700000000000001",
+			wantCh: "C012ABC",
+			wantTs: "1700000000.000001",
+		},
 	}
 
 	for _, tc := range cases {
@@ -153,10 +167,11 @@ func TestParseChannelTs_invalid(t *testing.T) {
 		{"empty ts", "C012ABC3456:"},
 		{"bad channel prefix (lowercase)", "c012ABC:1718197925.001234"},
 		{"bad channel prefix (digit)", "0012ABC:1718197925.001234"},
-		{"ts no dot", "C012ABC:1718197925001234"},
 		{"ts dot at start", "C012ABC:.001234"},
 		{"ts dot at end", "C012ABC:1718197925."},
 		{"ts non-numeric", "C012ABC:1718abc925.001234"},
+		{"ts p-form too short (≤6 digits)", "C012ABC:123456"},
+		{"ts p-form non-numeric", "C012ABC:17180abc25001234"},
 	}
 
 	for _, tc := range cases {
@@ -222,8 +237,8 @@ func TestParseChannelTs_threePartInvalid(t *testing.T) {
 	}{
 		{"empty thread ts", "C012ABC:  :1718197925.001234"},
 		{"empty reply ts", "C012ABC:1718197000.000001:"},
-		{"bad thread ts no dot", "C012ABC:1718197000000001:1718197925.001234"},
-		{"bad reply ts no dot", "C012ABC:1718197000.000001:1718197925001234"},
+		{"thread ts too short p-form", "C012ABC:12345:1718197925.001234"},
+		{"reply ts too short p-form", "C012ABC:1718197000.000001:12345"},
 	}
 
 	for _, tc := range cases {
@@ -233,6 +248,20 @@ func TestParseChannelTs_threePartInvalid(t *testing.T) {
 				t.Errorf("expected error for input %q, got nil", tc.input)
 			}
 		})
+	}
+}
+
+func TestParseChannelTs_threePartPForm(t *testing.T) {
+	// Both timestamps in dot-free (p-form) should be normalised.
+	got, err := ParseChannelTs("C012ABC3456:1718197000000001:1718197925001234")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ThreadTs != "1718197000.000001" {
+		t.Errorf("ThreadTs: got %q, want %q", got.ThreadTs, "1718197000.000001")
+	}
+	if got.Ts != "1718197925.001234" {
+		t.Errorf("Ts: got %q, want %q", got.Ts, "1718197925.001234")
 	}
 }
 
