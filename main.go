@@ -40,8 +40,12 @@ func main() {
 var errAlreadyPresented = errors.New("already presented")
 
 func run(args []string, stdout, stderr io.Writer) error {
+	logLevel := slog.LevelInfo
+	if os.Getenv("SLACKCLI_DEBUG") != "" {
+		logLevel = slog.LevelDebug
+	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: logLevel,
 	})))
 
 	start := time.Now()
@@ -181,20 +185,13 @@ func buildRoot(stdout, stderr io.Writer) *cobra.Command {
 // ---------------------------------------------------------------------------
 // Layer 1 → Layer 2 bridge for auth login / reauth
 //
-// These commands need OS signals and Playwright, so their RunE is built here
+// These commands need OS signals and CDP, so their RunE is built here
 // rather than in cmd/. The presenter is applied inline because timing starts
 // before the browser opens.
-// ---------------------------------------------------------------------------
 
 func makeLoginRunE(stdout, stderr io.Writer, isReauth bool) func(*cobra.Command, []string) error {
 	return func(c *cobra.Command, _ []string) error {
 		workspace, _ := c.Flags().GetString("workspace")
-		firefox, _ := c.Flags().GetBool("firefox")
-
-		bt := browser.Chromium
-		if firefox {
-			bt = browser.Firefox
-		}
 
 		if isReauth {
 			ws := cmd.CanonicalDomain(workspace)
@@ -216,7 +213,7 @@ func makeLoginRunE(stdout, stderr io.Writer, isReauth bool) func(*cobra.Command,
 		start := time.Now()
 		slog.Info("opening browser", "workspace", workspace)
 
-		creds, err := browser.Extract(ctx, workspace, browser.Options{Browser: bt})
+		creds, err := browser.Extract(ctx, workspace, browser.Options{})
 		elapsed := time.Since(start)
 
 		if err != nil {

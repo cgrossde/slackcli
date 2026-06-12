@@ -67,7 +67,6 @@ func NewAuthCmd(
 		RunE:  loginRunE,
 	}
 	loginCmd.Flags().String("workspace", "", "Slack workspace name or URL (e.g. myorg or myorg.slack.com)")
-	loginCmd.Flags().Bool("firefox", false, "Use Firefox instead of Chromium")
 	_ = loginCmd.MarkFlagRequired("workspace")
 
 	// reauth
@@ -77,7 +76,6 @@ func NewAuthCmd(
 		RunE:  reauthRunE,
 	}
 	reauthCmd.Flags().String("workspace", "", "Slack workspace name or URL (e.g. myorg or myorg.slack.com)")
-	reauthCmd.Flags().Bool("firefox", false, "Use Firefox instead of Chromium")
 	_ = reauthCmd.MarkFlagRequired("workspace")
 
 	// status

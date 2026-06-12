@@ -1,9 +1,8 @@
 package browser
 
 import (
+	"encoding/json"
 	"testing"
-
-	"github.com/playwright-community/playwright-go"
 )
 
 func TestTokenRE(t *testing.T) {
@@ -15,14 +14,14 @@ func TestTokenRE(t *testing.T) {
 		want  bool
 	}{
 		{
-			name:  "valid xoxc token",
+			name:  "valid xoxc token 64-char suffix",
 			input: "xoxc-1234567890-9876543210-1122334455-abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
 			want:  true,
 		},
 		{
-			name:  "too short hex segment",
-			input: "xoxc-123-456-789-abc",
-			want:  false,
+			name:  "valid xoxc token short suffix",
+			input: "xoxc-123-456-789-abcdef1234",
+			want:  true,
 		},
 		{
 			name:  "xoxb token not matched",
@@ -173,46 +172,58 @@ func TestExtractTokenFromURL(t *testing.T) {
 	}
 }
 
-func TestFindDCookie(t *testing.T) {
+func TestParseDCookie(t *testing.T) {
 	t.Parallel()
 
 	validXoxd := "xoxd-example-session-cookie-value"
 
+	makeCookies := func(cookies []struct{ Name, Value, Domain string }) json.RawMessage {
+		type c struct {
+			Name   string `json:"name"`
+			Value  string `json:"value"`
+			Domain string `json:"domain"`
+		}
+		type r struct {
+			Cookies []c `json:"cookies"`
+		}
+		cs := make([]c, len(cookies))
+		for i, ck := range cookies {
+			cs[i] = c{ck.Name, ck.Value, ck.Domain}
+		}
+		b, _ := json.Marshal(r{Cookies: cs})
+		return b
+	}
+
 	tests := []struct {
 		name    string
-		cookies []playwright.Cookie
+		cookies []struct{ Name, Value, Domain string }
 		want    string
 	}{
 		{
 			name: "d cookie present",
-			cookies: []playwright.Cookie{
-				{Name: "other", Value: "v1", Domain: ".slack.com"},
-				{Name: "d", Value: validXoxd, Domain: ".slack.com"},
+			cookies: []struct{ Name, Value, Domain string }{
+				{"other", "v1", ".slack.com"},
+				{"d", validXoxd, ".slack.com"},
 			},
 			want: validXoxd,
 		},
 		{
 			name: "d cookie on subdomain",
-			cookies: []playwright.Cookie{
-				{Name: "d", Value: validXoxd, Domain: "app.slack.com"},
+			cookies: []struct{ Name, Value, Domain string }{
+				{"d", validXoxd, "app.slack.com"},
 			},
 			want: validXoxd,
 		},
 		{
 			name: "d cookie wrong domain ignored",
-			cookies: []playwright.Cookie{
-				{Name: "d", Value: validXoxd, Domain: ".otherdomain.com"},
+			cookies: []struct{ Name, Value, Domain string }{
+				{"d", validXoxd, ".otherdomain.com"},
 			},
 			want: "",
 		},
 		{
 			name:    "empty cookie list",
-			cookies: []playwright.Cookie{},
-			want:    "",
-		},
-		{
-			name:    "nil cookie list",
-			cookies: nil,
+			cookies: []struct{ Name, Value, Domain string }{},
 			want:    "",
 		},
 	}
@@ -220,9 +231,9 @@ func TestFindDCookie(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := findDCookie(tt.cookies)
+			got := parseDCookie(makeCookies(tt.cookies))
 			if got != tt.want {
-				t.Errorf("findDCookie() = %q, want %q", got, tt.want)
+				t.Errorf("parseDCookie() = %q, want %q", got, tt.want)
 			}
 		})
 	}
