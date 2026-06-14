@@ -190,7 +190,9 @@ func hasPrintable(s string) bool {
 // PrettyThread renders messages as a human-readable, ANSI-styled block.
 // fileFetcher, when non-nil, is called to download image file attachments for
 // inline rendering (iTerm2 protocol). Pass nil to skip image rendering.
-func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher func(url string) ([]byte, string, error), selfID string) (string, error) {
+// dmPeer is the resolved display name of the DM conversation partner (non-empty
+// only for 1:1 DM channels); pass "" for regular channels.
+func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher func(url string) ([]byte, string, error), selfID, dmPeer string) (string, error) {
 	hasDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 	pr, err := newPrettyRenderer(hasDark)
 	if err != nil {
@@ -203,7 +205,7 @@ func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher 
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		rendered, err := pr.renderMessage(m, cache, selfID)
+		rendered, err := pr.renderMessage(m, cache, selfID, dmPeer)
 		if err != nil {
 			return "", fmt.Errorf("rendering message %d: %w", i, err)
 		}
@@ -212,13 +214,30 @@ func PrettyThread(messages []slack.Message, cache *slack.UserCache, fileFetcher 
 	return b.String(), nil
 }
 
-func (pr *prettyRenderer) renderMessage(m slack.Message, cache *slack.UserCache, selfID string) (string, error) {
+func (pr *prettyRenderer) renderMessage(m slack.Message, cache *slack.UserCache, selfID, dmPeer string) (string, error) {
 	var b strings.Builder
 
 	// ── Header line — filled to 120 cols with headerBg background ────────────
 	// Each segment must carry the headerBg itself so ANSI resets don't produce
 	// a visible seam. Width(120) then fills trailing space with the same bg.
 	author, _ := resolveAuthorPretty(m, cache)
+	isSelf := selfID != "" && m.User == selfID
+	if isSelf {
+		author = "You"
+	}
+	// For DM channels, replace the bare author with the directional DM label so
+	// the header shows e.g. "DM: You → Alice" or "DM: Alice → You".
+	// ShortLabel (no handle suffix) keeps the label compact — peer name from
+	// resolveDMPeer already uses ShortLabel.
+	if dmPeer != "" {
+		senderShort := author
+		if !isSelf && cache != nil && m.User != "" {
+			if u, err := cache.GetUser(m.User); err == nil {
+				senderShort = u.ShortLabel()
+			}
+		}
+		author = dmLabel(isSelf, senderShort, dmPeer)
+	}
 	authorStyled := lipgloss.NewStyle().
 		Background(lipgloss.Color(headerBg)).
 		Foreground(lipgloss.Color(userColorHex)).

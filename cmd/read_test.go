@@ -24,7 +24,7 @@ func TestFormatMessage_headerLine(t *testing.T) {
 	}
 
 	// nil cache → raw user ID in header
-	got := formatMessage(msg, 0, nil, "")
+	got := formatMessage(msg, 0, nil, "", "")
 	lines := strings.SplitN(got, "\n", 3)
 	header := lines[0]
 
@@ -39,7 +39,7 @@ func TestFormatMessage_headerLine(t *testing.T) {
 	}
 
 	// index 1 → reply label at end
-	got2 := formatMessage(msg, 1, nil, "")
+	got2 := formatMessage(msg, 1, nil, "", "")
 	header2 := strings.SplitN(got2, "\n", 2)[0]
 	if len(header2) != 120 {
 		t.Errorf("reply header length = %d, want 120; got: %q", len(header2), header2)
@@ -69,7 +69,7 @@ func TestFormatMessage_withCache(t *testing.T) {
 		Text: "hello <@UXYZ987GHI> and <@UNKNOWN>",
 	}
 
-	got := formatMessage(msg, 0, cache, "")
+	got := formatMessage(msg, 0, cache, "", "")
 	header := strings.SplitN(got, "\n", 2)[0]
 
 	if len(header) != 120 {
@@ -88,7 +88,7 @@ func TestFormatMessage_withCache(t *testing.T) {
 
 func TestFormatMessage_unparsableTs(t *testing.T) {
 	msg := slack.Message{User: "U123", Ts: "not-a-ts", Text: "x"}
-	got := formatMessage(msg, 0, nil, "")
+	got := formatMessage(msg, 0, nil, "", "")
 	header := strings.SplitN(got, "\n", 2)[0]
 	if len(header) != 120 {
 		t.Errorf("header length = %d, want 120; got: %q", len(header), header)
@@ -378,7 +378,7 @@ func TestFormatMessage_files(t *testing.T) {
 			},
 		},
 	}
-	got := formatMessage(msg, 0, nil, "")
+	got := formatMessage(msg, 0, nil, "", "")
 	if !strings.Contains(got, "[file] report.pdf (PDF)") {
 		t.Errorf("missing file line in: %q", got)
 	}
@@ -400,7 +400,7 @@ func TestFormatMessage_fileNoType(t *testing.T) {
 			{Name: "data.bin", URLPrivate: "https://files.slack.com/data.bin"},
 		},
 	}
-	got := formatMessage(msg, 0, nil, "")
+	got := formatMessage(msg, 0, nil, "", "")
 	if !strings.Contains(got, "[file] data.bin") {
 		t.Errorf("missing file line in: %q", got)
 	}
@@ -423,7 +423,7 @@ func TestFormatMessage_reactions(t *testing.T) {
 		},
 	}
 	// No selfID — bare counts.
-	got := formatMessage(msg, 0, nil, "")
+	got := formatMessage(msg, 0, nil, "", "")
 	if !strings.Contains(got, "Reactions: :thumbsup: ×5") {
 		t.Errorf("missing 'Reactions:' prefix + thumbsup in: %q", got)
 	}
@@ -432,7 +432,7 @@ func TestFormatMessage_reactions(t *testing.T) {
 	}
 
 	// selfID matches one reaction (count 5) → "you + 4 others"
-	got2 := formatMessage(msg, 0, nil, "U2")
+	got2 := formatMessage(msg, 0, nil, "U2", "")
 	if !strings.Contains(got2, ":thumbsup: ×5 (you + 4 others)") {
 		t.Errorf("expected 'you + 4 others' annotation: %q", got2)
 	}
@@ -441,7 +441,7 @@ func TestFormatMessage_reactions(t *testing.T) {
 		t.Errorf("expected '(you)' annotation for sole reaction: %q", got2)
 	}
 	// Reaction not involving selfID remains bare.
-	got3 := formatMessage(msg, 0, nil, "U99")
+	got3 := formatMessage(msg, 0, nil, "U99", "")
 	if !strings.Contains(got3, ":thumbsup: ×5") || strings.Contains(got3, "(you") {
 		t.Errorf("expected bare count when selfID not in reaction: %q", got3)
 	}
@@ -476,7 +476,7 @@ func TestFormatReactions(t *testing.T) {
 
 func TestFormatMessage_noFilesNoReactions(t *testing.T) {
 	msg := slack.Message{User: "U1", Ts: "1700000000.000001", Text: "plain"}
-	got := formatMessage(msg, 0, nil, "")
+	got := formatMessage(msg, 0, nil, "", "")
 	if strings.Contains(got, "[file]") {
 		t.Errorf("unexpected [file] in: %q", got)
 	}
@@ -539,9 +539,136 @@ func TestFormatMessage_fileURLPrivateHint(t *testing.T) {
 			{Name: "data.bin", URLPrivate: "https://files.slack.com/data.bin"},
 		},
 	}
-	got := formatMessage(msg, 0, nil, "")
+	got := formatMessage(msg, 0, nil, "", "")
 	if !strings.Contains(got, "→ slackcli read https://files.slack.com/data.bin") {
 		t.Errorf("expected url_private hint in: %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatMessage — DM label and "You" alias
+// ---------------------------------------------------------------------------
+
+func TestFormatMessage_dmPeer_senderIsPeer(t *testing.T) {
+	// Sender is the peer (not self): "DM: Alice → You"
+	cache := slack.NewUserCacheFromMap("example.slack.com", map[string]slack.CachedUser{
+		"UOTHER": {ID: "UOTHER", Name: "alice", DisplayName: "Alice"},
+	})
+	msg := slack.Message{User: "UOTHER", Ts: "1700000000.000001", Text: "hi"}
+	got := formatMessage(msg, 0, cache, "USELF", "Alice")
+	header := strings.SplitN(got, "\n", 2)[0]
+	if !strings.Contains(header, "DM: Alice → You") {
+		t.Errorf("expected 'DM: Alice → You' in header, got: %q", header)
+	}
+}
+
+func TestFormatMessage_dmPeer_senderIsSelf(t *testing.T) {
+	// Sender is self: "DM: You → Alice"
+	msg := slack.Message{User: "USELF", Ts: "1700000000.000001", Text: "hi"}
+	got := formatMessage(msg, 0, nil, "USELF", "Alice")
+	header := strings.SplitN(got, "\n", 2)[0]
+	if !strings.Contains(header, "DM: You → Alice") {
+		t.Errorf("expected 'DM: You → Alice' in header, got: %q", header)
+	}
+}
+
+func TestFormatMessage_dmPeer_selfDM(t *testing.T) {
+	// Self-DM (peer == "You"): "DM: You → Self"
+	msg := slack.Message{User: "USELF", Ts: "1700000000.000001", Text: "note"}
+	got := formatMessage(msg, 0, nil, "USELF", "You")
+	header := strings.SplitN(got, "\n", 2)[0]
+	if !strings.Contains(header, "DM: You → Self") {
+		t.Errorf("expected 'DM: You → Self' in header, got: %q", header)
+	}
+}
+
+func TestFormatMessage_noDmPeer_noLabel(t *testing.T) {
+	// Non-DM channel: no DM label in header
+	msg := slack.Message{User: "UOTHER", Ts: "1700000000.000001", Text: "hi"}
+	got := formatMessage(msg, 0, nil, "USELF", "")
+	header := strings.SplitN(got, "\n", 2)[0]
+	if strings.Contains(header, "DM:") {
+		t.Errorf("unexpected 'DM:' in non-DM header: %q", header)
+	}
+}
+
+func TestFormatMessage_youAlias_notSelf(t *testing.T) {
+	cache := slack.NewUserCacheFromMap("example.slack.com", map[string]slack.CachedUser{
+		"UOTHER": {ID: "UOTHER", Name: "alice", DisplayName: "Alice"},
+	})
+	msg := slack.Message{User: "UOTHER", Ts: "1700000000.000001", Text: "hi"}
+	// selfID differs from sender, no dmPeer → display name shown, no "You"
+	got := formatMessage(msg, 0, cache, "USELF", "")
+	header := strings.SplitN(got, "\n", 2)[0]
+	if strings.Contains(header, "You") {
+		t.Errorf("'You' should not appear for a different sender: %q", header)
+	}
+	if !strings.Contains(header, "Alice") {
+		t.Errorf("display name not shown for other sender: %q", header)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// dmLabel
+// ---------------------------------------------------------------------------
+
+func TestDmLabel(t *testing.T) {
+	tests := []struct {
+		senderIsSelf bool
+		senderName   string
+		peerName     string
+		want         string
+	}{
+		{true, "You", "Alice", "DM: You → Alice"},
+		{false, "Alice", "Alice", "DM: Alice → You"},
+		{true, "You", "You", "DM: You → Self"},
+	}
+	for _, tc := range tests {
+		got := dmLabel(tc.senderIsSelf, tc.senderName, tc.peerName)
+		if got != tc.want {
+			t.Errorf("dmLabel(%v, %q, %q) = %q, want %q", tc.senderIsSelf, tc.senderName, tc.peerName, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveDMPeer
+// ---------------------------------------------------------------------------
+
+func TestResolveDMPeer_nonDM(t *testing.T) {
+	msgs := []slack.Message{{User: "U1"}}
+	// Non-DM channel → always ""
+	got := resolveDMPeer("C0GENERAL", "U1", msgs, nil)
+	if got != "" {
+		t.Errorf("expected empty for non-DM channel, got %q", got)
+	}
+}
+
+func TestResolveDMPeer_peerFound(t *testing.T) {
+	cache := slack.NewUserCacheFromMap("x.slack.com", map[string]slack.CachedUser{
+		"UPEER": {ID: "UPEER", Name: "alice", DisplayName: "Alice"},
+	})
+	msgs := []slack.Message{{User: "UPEER"}, {User: "USELF"}}
+	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, cache)
+	if got != "Alice" {
+		t.Errorf("expected peer display name 'Alice', got %q", got)
+	}
+}
+
+func TestResolveDMPeer_selfDM(t *testing.T) {
+	msgs := []slack.Message{{User: "USELF"}}
+	// All messages from self → self-DM → returns "You"
+	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, nil)
+	if got != "You" {
+		t.Errorf("expected 'You' for self-DM, got %q", got)
+	}
+}
+
+func TestResolveDMPeer_noSelfID(t *testing.T) {
+	msgs := []slack.Message{{User: "UPEER"}}
+	got := resolveDMPeer("D0B3PCPL0", "", msgs, nil)
+	if got != "" {
+		t.Errorf("expected empty when selfID is empty, got %q", got)
 	}
 }
 

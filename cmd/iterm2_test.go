@@ -140,7 +140,7 @@ func TestRenderMessage_inlineImage(t *testing.T) {
 		},
 	}
 
-	got, err := pr.renderMessage(m, nil, "")
+	got, err := pr.renderMessage(m, nil, "", "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}

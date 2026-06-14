@@ -174,10 +174,17 @@ func Search(query string, flags SearchFlags) (string, error) {
 		return "", fmt.Errorf("searching messages: %w", err)
 	}
 
+	// Resolve self ID for "You" annotation in plain-text output. Best-effort:
+	// auth.test is a fast cached call; skip on error to avoid blocking output.
+	selfID := ""
+	if auth, authErr := client.AuthTest(); authErr == nil && auth.OK {
+		selfID = auth.UserID
+	}
+
 	if flags.JSON {
 		return formatSearchResultsJSON(result, cache, workspace), nil
 	}
-	return formatSearchResults(result, cache, flags), nil
+	return formatSearchResults(result, cache, flags, selfID), nil
 }
 
 // resolveWorkspace picks the workspace domain for a command.
@@ -426,7 +433,8 @@ func resolveDate(input string, now time.Time) (string, error) {
 
 // formatSearchResults renders a SearchResult as a plain-text, LLM-friendly
 // string. User IDs in the text are resolved via cache when available.
-func formatSearchResults(result slack.SearchResult, cache *slack.UserCache, flags SearchFlags) string {
+// selfID is the authenticated user's Slack user ID; pass "" to skip self-annotation.
+func formatSearchResults(result slack.SearchResult, cache *slack.UserCache, flags SearchFlags, selfID string) string {
 	var sb strings.Builder
 
 	// Header line.
@@ -454,16 +462,46 @@ func formatSearchResults(result slack.SearchResult, cache *slack.UserCache, flag
 	sb.WriteString("\n")
 
 	for i, m := range result.Matches {
-		// Resolve user display name.
+		// Resolve sender; substitute "You" when the sender is the authenticated user.
+		isSelf := selfID != "" && m.UserID == selfID
 		author := resolveSearchAuthor(m, cache)
+		if isSelf {
+			author = "You"
+		}
 
-		// Resolve channel display label.
-		channel := channelLabel(m, cache)
+		// For DM channels, replace channel label with a directional DM label.
+		// For regular channels, use "author → #channel" order.
+		var headerLabel string
+		if len(m.ChannelID) > 0 && m.ChannelID[0] == 'D' {
+			// DM labels use ShortLabel (no handle suffix) to stay compact.
+			senderShort := author
+			if !isSelf && cache != nil && m.UserID != "" {
+				if u, err := cache.GetUser(m.UserID); err == nil {
+					senderShort = u.ShortLabel()
+				}
+			}
+			peerName := ""
+			if m.DMPeerID != "" && cache != nil {
+				if u, err := cache.GetUser(m.DMPeerID); err == nil {
+					peerName = u.ShortLabel()
+				}
+			}
+			if peerName == "" {
+				peerName = m.DMPeerID // raw ID fallback
+			}
+			if peerName == "" {
+				peerName = "You" // self-DM fallback
+			}
+			headerLabel = dmLabel(isSelf, senderShort, peerName)
+		} else {
+			channel := channelLabel(m, cache)
+			headerLabel = author + " → " + channel
+		}
 
 		// Format timestamp.
 		tsStr := formatSearchTs(m.Ts)
 
-		fmt.Fprintf(&sb, "[%d] %s · %s · %s\n", i+1, channel, author, tsStr)
+		fmt.Fprintf(&sb, "[%d] %s · %s\n", i+1, headerLabel, tsStr)
 
 		// Use the API snippet as-is. When Slack has truncated the text it ends
 		// with "…" or "..."; in that case strip any trailing partial word so we

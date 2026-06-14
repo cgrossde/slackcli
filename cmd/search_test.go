@@ -387,7 +387,7 @@ func TestFormatSearchResults_emptyResult(t *testing.T) {
 		Pages: 0,
 		Count: 20,
 	}
-	got := formatSearchResults(result, nil, SearchFlags{Count: 20})
+	got := formatSearchResults(result, nil, SearchFlags{Count: 20}, "")
 	if !strings.Contains(got, `"nonexistent"`) {
 		t.Errorf("missing query in output: %q", got)
 	}
@@ -414,7 +414,7 @@ func TestFormatSearchResults_singleMatch(t *testing.T) {
 			},
 		},
 	}
-	got := formatSearchResults(result, nil, SearchFlags{Count: 20})
+	got := formatSearchResults(result, nil, SearchFlags{Count: 20}, "")
 
 	if !strings.Contains(got, "[1]") {
 		t.Errorf("missing [1] in output: %q", got)
@@ -442,7 +442,7 @@ func TestFormatSearchResults_paginationFooter(t *testing.T) {
 		},
 	}
 	flags := SearchFlags{Count: 20, Page: 1}
-	got := formatSearchResults(result, nil, flags)
+	got := formatSearchResults(result, nil, flags, "")
 
 	if !strings.Contains(got, "page 1 of 3") {
 		t.Errorf("missing pagination in footer: %q", got)
@@ -463,7 +463,7 @@ func TestFormatSearchResults_noNextPageOnLastPage(t *testing.T) {
 			{ChannelName: "ops", Ts: "1718200320.000001", Text: "msg"},
 		},
 	}
-	got := formatSearchResults(result, nil, SearchFlags{Count: 20})
+	got := formatSearchResults(result, nil, SearchFlags{Count: 20}, "")
 	if strings.Contains(got, "next:") {
 		t.Errorf("should not emit next: hint on last page: %q", got)
 	}
@@ -489,9 +489,84 @@ func TestFormatSearchResults_withUserCache(t *testing.T) {
 			},
 		},
 	}
-	got := formatSearchResults(result, cache, SearchFlags{Count: 20})
+	got := formatSearchResults(result, cache, SearchFlags{Count: 20}, "")
 	if !strings.Contains(got, "Alice Foo") {
 		t.Errorf("expected resolved user name 'Alice Foo' in output: %q", got)
+	}
+}
+
+func TestFormatSearchResults_directionalHeader(t *testing.T) {
+	// Non-DM: "alice → #ops · ts"
+	result := slack.SearchResult{
+		Query: "deploy",
+		Total: 1, Page: 1, Pages: 1, Count: 20,
+		Matches: []slack.SearchMatch{
+			{ChannelName: "ops", UserID: "UABC", Username: "alice", Ts: "1718200320.000001", Text: "msg"},
+		},
+	}
+	got := formatSearchResults(result, nil, SearchFlags{Count: 20}, "")
+	if !strings.Contains(got, "alice → #ops") {
+		t.Errorf("expected 'alice → #ops' in output: %q", got)
+	}
+}
+
+func TestFormatSearchResults_dmLabel_senderIsSelf(t *testing.T) {
+	// DM where sender == self: "DM: You → Alice · ts"
+	users := map[string]slack.CachedUser{
+		"UPEER": {ID: "UPEER", Name: "alice", DisplayName: "Alice"},
+	}
+	cache := slack.NewUserCacheFromMap("test.slack.com", users)
+	result := slack.SearchResult{
+		Query: "hello",
+		Total: 1, Page: 1, Pages: 1, Count: 20,
+		Matches: []slack.SearchMatch{
+			{ChannelID: "D0B3PCPL0", DMPeerID: "UPEER", UserID: "USELF", Ts: "1718200320.000001", Text: "hi"},
+		},
+	}
+	got := formatSearchResults(result, cache, SearchFlags{Count: 20}, "USELF")
+	if !strings.Contains(got, "DM: You → Alice") {
+		t.Errorf("expected 'DM: You → Alice' in output: %q", got)
+	}
+}
+
+func TestFormatSearchResults_dmLabel_senderIsPeer(t *testing.T) {
+	// DM where sender == peer: "DM: Alice → You · ts"
+	users := map[string]slack.CachedUser{
+		"UPEER": {ID: "UPEER", Name: "alice", DisplayName: "Alice"},
+	}
+	cache := slack.NewUserCacheFromMap("test.slack.com", users)
+	result := slack.SearchResult{
+		Query: "hello",
+		Total: 1, Page: 1, Pages: 1, Count: 20,
+		Matches: []slack.SearchMatch{
+			{ChannelID: "D0B3PCPL0", DMPeerID: "UPEER", UserID: "UPEER", Ts: "1718200320.000001", Text: "hi"},
+		},
+	}
+	got := formatSearchResults(result, cache, SearchFlags{Count: 20}, "USELF")
+	if !strings.Contains(got, "DM: Alice → You") {
+		t.Errorf("expected 'DM: Alice → You' in output: %q", got)
+	}
+}
+
+func TestFormatSearchResults_youAlias_channel(t *testing.T) {
+	// Non-DM: sender == self → "You → #general"
+	users := map[string]slack.CachedUser{
+		"USELF": {ID: "USELF", Name: "me", DisplayName: "My Self"},
+	}
+	cache := slack.NewUserCacheFromMap("test.slack.com", users)
+	result := slack.SearchResult{
+		Query: "hello",
+		Total: 1, Page: 1, Pages: 1, Count: 20,
+		Matches: []slack.SearchMatch{
+			{ChannelName: "general", UserID: "USELF", Ts: "1718200320.000001", Text: "I said this"},
+		},
+	}
+	got := formatSearchResults(result, cache, SearchFlags{Count: 20}, "USELF")
+	if !strings.Contains(got, "You → #general") {
+		t.Errorf("expected 'You → #general' when selfID matches sender: %q", got)
+	}
+	if strings.Contains(got, "My Self") {
+		t.Errorf("display name should be replaced by 'You' for self messages: %q", got)
 	}
 }
 

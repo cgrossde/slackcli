@@ -21,7 +21,7 @@ func renderOneMessage(t *testing.T, m slack.Message) string {
 	if err != nil {
 		t.Fatalf("newPrettyRenderer: %v", err)
 	}
-	out, err := pr.renderMessage(m, nil, "")
+	out, err := pr.renderMessage(m, nil, "", "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestRenderMessage_reactionsSelfAnnotation(t *testing.T) {
 			{Name: "ok_hand", Count: 1, Users: []string{"USELF"}},
 		},
 	}
-	out, err := pr.renderMessage(m, nil, "USELF")
+	out, err := pr.renderMessage(m, nil, "USELF", "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}

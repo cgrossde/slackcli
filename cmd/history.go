@@ -153,7 +153,8 @@ func History(args []string, flags HistoryFlags) (string, error) {
 			selfID = auth.UserID
 		}
 	}
-	return formatHistoryPlain(result, channelID, cache, selfID), nil
+	dmPeer := resolveDMPeer(channelID, selfID, result.Messages, cache)
+	return formatHistoryPlain(result, channelID, cache, selfID, dmPeer), nil
 }
 
 // HistoryPretty is the --pretty variant of History.
@@ -172,7 +173,8 @@ func HistoryPretty(args []string, flags HistoryFlags) (string, error) {
 			selfID = auth.UserID
 		}
 	}
-	out, err := PrettyThread(result.Messages, cache, fetcher, selfID)
+	dmPeer := resolveDMPeer(channelID, selfID, result.Messages, cache)
+	out, err := PrettyThread(result.Messages, cache, fetcher, selfID, dmPeer)
 	if err != nil {
 		return "", err
 	}
@@ -455,13 +457,14 @@ func dateToEpoch(input string) (string, error) {
 }
 
 // formatHistoryPlain renders the HistoryResult as plain text.
-func formatHistoryPlain(result slack.HistoryResult, channelID string, cache *slack.UserCache, selfID string) string {
+// dmPeer is the resolved display name of the DM conversation partner; "" for non-DM channels.
+func formatHistoryPlain(result slack.HistoryResult, channelID string, cache *slack.UserCache, selfID, dmPeer string) string {
 	var b strings.Builder
 	for i, m := range result.Messages {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(formatHistoryMessage(m, channelID, cache, selfID))
+		b.WriteString(formatHistoryMessage(m, channelID, cache, selfID, dmPeer))
 	}
 	b.WriteString(formatHistoryFooter(result, channelID, true))
 	return b.String()
@@ -470,11 +473,25 @@ func formatHistoryPlain(result slack.HistoryResult, channelID string, cache *sla
 // formatHistoryMessage renders a single history message as plain text.
 // It mirrors formatMessage from read.go but uses "[ message ]" label for all
 // entries (no thread index) and shows a [N replies] indicator for thread roots.
-func formatHistoryMessage(m slack.Message, channelID string, cache *slack.UserCache, selfID string) string {
+// dmPeer is the resolved display name of the DM conversation partner; "" for non-DM channels.
+func formatHistoryMessage(m slack.Message, channelID string, cache *slack.UserCache, selfID, dmPeer string) string {
 	var b strings.Builder
 
 	label := "[ message ]=="
 	author := resolveAuthor(m, cache)
+	isSelf := selfID != "" && m.User == selfID
+	if isSelf {
+		author = "You"
+	}
+	if dmPeer != "" {
+		senderShort := author
+		if !isSelf && cache != nil && m.User != "" {
+			if u, err := cache.GetUser(m.User); err == nil {
+				senderShort = u.ShortLabel()
+			}
+		}
+		author = dmLabel(isSelf, senderShort, dmPeer)
+	}
 
 	tsHuman := m.Ts
 	if f, err := strconv.ParseFloat(m.Ts, 64); err == nil {

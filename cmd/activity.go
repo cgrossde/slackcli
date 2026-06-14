@@ -426,9 +426,9 @@ func activityDescription(item slack.ActivityItem, cache *slack.UserCache) string
 	case "keyword":
 		return fmt.Sprintf("%s triggered keyword alert", actor)
 	case "dm":
-		return fmt.Sprintf("%s · DM", actor)
+		return "sent you a DM"
 	case "bot_dm_bundle":
-		return fmt.Sprintf("%s · bot DM", actor)
+		return "bot DM"
 	case "internal_channel_invite", "external_channel_invite":
 		return fmt.Sprintf("%s invited you", actor)
 	case "shared_workspace_invite":

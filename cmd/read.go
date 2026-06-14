@@ -308,6 +308,7 @@ func ReadMessage(ref, workspace, threadTs string) (string, error) {
 			selfID = auth.UserID
 		}
 	}
+	dmPeer := resolveDMPeer(resolved.ChannelID, selfID, messages, cache)
 
 	var b strings.Builder
 	if resolvedWS != "" && resolvedWS != resolved.Workspace {
@@ -317,7 +318,7 @@ func ReadMessage(ref, workspace, threadTs string) (string, error) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(formatMessage(m, i, cache, selfID))
+		b.WriteString(formatMessage(m, i, cache, selfID, dmPeer))
 	}
 	return b.String(), nil
 }
@@ -345,7 +346,8 @@ func ReadMessagePretty(ref, workspace, threadTs string) (string, error) {
 			selfID = auth.UserID
 		}
 	}
-	out, err := PrettyThread(messages, cache, fetcher, selfID)
+	dmPeer := resolveDMPeer(resolved.ChannelID, selfID, messages, cache)
+	out, err := PrettyThread(messages, cache, fetcher, selfID, dmPeer)
 	if err != nil {
 		return "", err
 	}
@@ -359,12 +361,15 @@ func ReadMessagePretty(ref, workspace, threadTs string) (string, error) {
 // index is the 0-based position in the thread (0 = root, ≥1 = reply).
 // cache resolves user IDs to display names; nil is safe (falls back to raw ID).
 // selfID is the authenticated user's Slack user ID; pass "" to skip self-annotation.
+// dmPeer is the display name of the DM conversation partner; non-empty only for
+// 1:1 DM channels, resolved by the caller via resolveDMPeer.
 //
 // Header format (exactly 120 chars):
 //
-//	== <author> <ts> ═══…═══[ message ]==
-//	== <author> <ts> ═══…═══[ reply N ]==
-func formatMessage(m slack.Message, index int, cache *slack.UserCache, selfID string) string {
+//	== <author>  <ts> ═══…═══[ message ]==      (regular channel)
+//	== DM: You → Peer  <ts> ═══…═══[ message ]==  (DM, sender is self)
+//	== DM: Peer → You  <ts> ═══…═══[ message ]==  (DM, sender is peer)
+func formatMessage(m slack.Message, index int, cache *slack.UserCache, selfID, dmPeer string) string {
 	var b strings.Builder
 
 	// Right anchor: "[ message ]==" or "[ reply N ]=="
@@ -373,8 +378,25 @@ func formatMessage(m slack.Message, index int, cache *slack.UserCache, selfID st
 		label = "[ message ]=="
 	}
 
-	// Resolve author to "DisplayName (Name)" via cache, fallback to raw ID.
+	// Resolve author; substitute "You" when the sender is the authenticated user.
 	author := resolveAuthor(m, cache)
+	isSelf := selfID != "" && m.User == selfID
+	if isSelf {
+		author = "You"
+	}
+
+	// For DM channels, replace the bare author with the directional DM label.
+	// Use ShortLabel for the sender name — the peer name already uses ShortLabel
+	// (from resolveDMPeer), and matching formats keeps the label compact.
+	if dmPeer != "" {
+		senderShort := author
+		if !isSelf && cache != nil && m.User != "" {
+			if u, err := cache.GetUser(m.User); err == nil {
+				senderShort = u.ShortLabel()
+			}
+		}
+		author = dmLabel(isSelf, senderShort, dmPeer)
+	}
 
 	// Parse ts: "1778570615.840589" → "2026-05-12 07:23" (UTC, no seconds, no TZ label).
 	tsHuman := m.Ts
@@ -530,6 +552,50 @@ func channelTypeFromID(id string) string {
 	default:
 		return "channel"
 	}
+}
+
+// dmLabel builds the directional DM header prefix shown instead of the bare
+// author name for 1:1 direct-message channels.
+//
+//	sender is self  →  "DM: You → PeerName"
+//	sender is peer  →  "DM: PeerName → You"
+//	self-DM         →  "DM: You → Self"  (peerName == "You")
+func dmLabel(senderIsSelf bool, senderName, peerName string) string {
+	if peerName == "You" {
+		// self-DM: both sides are the same user
+		return "DM: You → Self"
+	}
+	if senderIsSelf {
+		return "DM: You → " + peerName
+	}
+	return "DM: " + senderName + " → You"
+}
+
+// resolveDMPeer returns the display name of the other party in a 1:1 DM
+// thread or history result. It scans messages for the first user ID that
+// differs from selfID and resolves it via cache (ShortLabel). Returns "" when
+// selfID is empty, the channel is not a DM, or no peer can be identified.
+func resolveDMPeer(channelID, selfID string, messages []slack.Message, cache *slack.UserCache) string {
+	if selfID == "" || len(channelID) == 0 || channelID[0] != 'D' {
+		return ""
+	}
+	for _, m := range messages {
+		if m.User == "" || m.User == selfID {
+			continue
+		}
+		if cache != nil {
+			if u, err := cache.GetUser(m.User); err == nil {
+				return u.ShortLabel()
+			}
+		}
+		return m.User
+	}
+	// All messages are from self (self-DM or single-message thread). Return
+	// "You" so dmLabel can produce "DM: You → Self".
+	if len(messages) > 0 {
+		return "You"
+	}
+	return ""
 }
 
 // readMessageJSON is the JSON representation of one message in a thread.
