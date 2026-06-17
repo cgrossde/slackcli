@@ -73,14 +73,36 @@ PR is ready for review.
 --- 2 messages | has_more: false
     Tip: slackcli read <channel>:<ts> for full thread
 ```
- When a message has attachments, each is rendered as an indented block after reactions:
- 
- ```
-   [attachment] U314838
-   CR Please: https://github.example.com/org/mobile-sdk/pull/3223 [Branchfix]
-   → https://github.example.com/org/mobile-sdk/pull/3223
- ```
 
+**DM channels** (`D…` channel IDs): the header shows direction instead of a bare author name:
+
+```
+== DM: You → Alice  2026-05-16 09:01 ══════════════════════════[ message ]==
+Hey, are you free for a quick call?
+  → slackcli read D0B3PCPL0CF:1716847260.000003
+
+== DM: Alice → You  2026-05-16 09:03 ══════════════════════════[ message ]==
+Sure, give me 5 minutes.
+  → slackcli read D0B3PCPL0CF:1716847380.000004
+```
+
+When a message has attachments, each is rendered as an indented block after reactions:
+
+```
+  [attachment] U314838
+  CR Please: https://github.example.com/org/mobile-sdk/pull/3223 [Branchfix]
+  → https://github.example.com/org/mobile-sdk/pull/3223
+```
+
+**Reactions** appear on the line before the `→ slackcli read` hint when present:
+
+```
+  Reactions: :thumbsup: ×1 (you)  :heart: ×4 (you + 3 others)  :tada: ×2
+```
+
+- `:emoji: ×1 (you)` — you are the sole reactor
+- `:emoji: ×4 (you + 3 others)` — you reacted alongside others
+- `:emoji: ×2` — others only, no self-annotation
 
 Thread roots show a reply count indicator: `[N replies]` after the body.
 

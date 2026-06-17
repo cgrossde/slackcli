@@ -8,7 +8,7 @@ Slack revokes sessions that do not present a browser-like TLS fingerprint. The `
 
 A `transport.FuncTransport` wrapper injects browser headers on every request: `sec-ch-ua`, `sec-fetch-dest`, `sec-fetch-mode`, `sec-fetch-site`, and `Origin`.
 
-The `chromeUA` constant is pinned to `Chrome/143.0.7499.4`, which is the Chromium version bundled with `playwright-go v0.5700.1`. This ensures the User-Agent is consistent between the login browser session and API calls. When upgrading `playwright-go`, update both the constant and the version together.
+The `chromeUA` constant is pinned to `Chrome/143.0.7499.4`. When updating the browser binary, update this constant to match. This ensures the User-Agent is consistent between the login browser session and API calls.
 
 Cookie injection seeds a `cookiejar` with `d=<xoxd>` for `.slack.com`. If uTLS initialisation fails, a plain `cookieTransport` fallback is used.
 
@@ -42,7 +42,7 @@ Never call `os.Exit` inside a `RunE` implementation. Doing so makes the code pat
 
 Workspace credentials are stored in the macOS Keychain via `internal/keychain/keychain.go`. One generic-password item is maintained per workspace.
 
-Service name is `slackcli`; account name is the workspace domain (for example, `myorg.slack.com`). The value is a JSON-encoded `Entry` struct containing `Workspace`, `Token`, `Cookie`, and `SavedAt` fields.
+The value is a JSON-encoded `Entry` struct containing `Workspace`, `Token`, `Cookie`, `SavedAt`, and `team_id` (omitempty) fields. `team_id` stores the per-workspace team ID (T…); it is populated at login and lazily by `slackcli open` via `client.userBoot`. It is used by the `slack://` deep-link scheme.
 
 Missing entries are signalled by the `ErrNotFound` sentinel. Callers use `errors.Is` to check for this condition.
 
@@ -106,6 +106,23 @@ C9876543210  # #team-alerts
 
 To permit writing to a new channel, add its ID to `internal/slack/allowlist.txt` and rebuild the binary. See `allowlist.txt.example` in the same directory for format details.
 
+
+## Browser credential extraction (CDP)
+
+`internal/browser/extractor.go` implements credential extraction via the Chrome DevTools Protocol (CDP) with no third-party browser automation library.
+
+Flow:
+1. `FindChromeBinary()` searches for Chrome/Chromium/Brave at well-known macOS paths. `CHROME_APP` env var overrides.
+2. `chromeProfileDir()` returns `~/.config/slackcli/chrome-profile` (overridden by `SLACKCLI_CHROME_PROFILE`).
+3. If CDP port 9235 is not reachable, `launchChrome()` spawns the binary with `--remote-debugging-port=9235`.
+4. `cdpFindOrOpenPage()` navigates a tab to the workspace URL.
+5. `cdpExtractCredentials()` polls every 2s via `cdpConnect` (a hand-rolled RFC 6455 WebSocket client):
+   - `Runtime.evaluate` reads the xoxc token from `localStorage.localConfig_v2`.
+   - `Network.getCookies` reads the `"d"` session cookie.
+   Both must be present before the function returns.
+6. The tab is closed and Chrome is killed (if we launched it).
+
+`chromeUA` in `client.go` must match the Chrome major version in use.
 ## Markdown → mrkdwn conversion
 
 `internal/slack/mrkdwn.go` implements `MarkdownToMrkdwn(text string) string`, a pure conversion function used by `send --md`. It uses `github.com/yuin/goldmark` (GFM-compliant AST parser, already a project dependency) to parse the input and walks the AST to emit Slack mrkdwn. This avoids the double-transformation hazards of regex-based approaches.

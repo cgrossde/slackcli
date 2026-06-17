@@ -15,8 +15,8 @@ The intended caller is an LLM agent. Every design decision must serve that calle
 
 | Command | Flags | Description |
 |---|---|---|
-| `auth login` | `--workspace` (required), `--firefox` | Open browser, extract credentials, save to Keychain |
-| `auth reauth` | `--workspace` (required), `--firefox` | Delete existing credentials then re-login |
+| `auth login` | `--workspace` (required) | Open browser (Chrome/Chromium/Brave via CDP), extract credentials, save to Keychain |
+| `auth reauth` | `--workspace` (required) | Delete existing credentials then re-login |
 | `auth status` | `--workspace` (optional) | Verify saved tokens via `auth.test` |
 | `auth logout` | `--workspace` (required) | Remove Keychain entry |
 | `auth default` | `--workspace` (optional) | Get or set the default workspace |
@@ -34,7 +34,9 @@ The intended caller is an LLM agent. Every design decision must serve that calle
 | `snippet create [content]` | `--channel` (required), `--title`, `--type`, `--thread`, `--file`, `--comment`, `-w/--workspace` | Upload text as a code snippet to a whitelisted channel. Body from inline arg, `--file`, or piped stdin. Filetype inferred from file extension when `--type` is omitted. |
 | `snippet delete <file_id>` | `-w/--workspace` | Delete a snippet by file ID. Slack enforces ownership. |
 | `snippet types` | — | List supported `--type` values for snippet create. |
-Full usage details: `docs/auth.md`, `docs/read.md`, `docs/search.md`, `docs/live.md`, `docs/activity.md`, `docs/history.md`, `docs/send.md`, `docs/react.md`, `docs/delete.md`, `docs/forward.md`, `docs/snippet.md`.
+| `chats` | `-t/--type`, `-n/--count`, `--cursor`, `--json`, `-w/--workspace` | List recent DMs, MPDMs, and channels sorted by last activity. Types: `all` (default), `dm`, `mpdm`, `channel`, `all-with-channels`, `unread`. |
+| `open <target>` | `--print`, `-w/--workspace` | Open a Slack channel, DM, message, thread, or file in the macOS Slack desktop app via the `slack://` URL scheme. Targets: message permalink, channel permalink, `channelID:ts[:replyTs]`, bare channel/DM/MPDM ID, `#channel-name`, `@user`, file permalink. `--print` emits the URL instead of launching it. |
+Full usage details: `docs/auth.md`, `docs/read.md`, `docs/search.md`, `docs/live.md`, `docs/activity.md`, `docs/history.md`, `docs/send.md`, `docs/react.md`, `docs/delete.md`, `docs/forward.md`, `docs/snippet.md`, `docs/chats.md`, `docs/open.md`.
 
 ---
 
@@ -150,3 +152,5 @@ Rules:
 - `docs/forward.md` — forward command
 - `docs/history.md` — history command
 - `docs/snippet.md` — snippet command
+- `docs/chats.md` — chats command
+- `docs/open.md` — open command

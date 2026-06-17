@@ -37,6 +37,7 @@ type Entry struct {
 	Cookie         string    `json:"cookie"`
 	SavedAt        time.Time `json:"saved_at"`
 	EnterpriseID   string    `json:"enterprise_id,omitempty"`
+	TeamID         string    `json:"team_id,omitempty"`         // workspace team ID (T…); used to build slack:// deep links
 	GridWorkspaces []string  `json:"grid_workspaces,omitempty"` // domains of sibling workspaces on Enterprise Grid
 }
 

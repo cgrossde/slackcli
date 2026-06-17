@@ -253,6 +253,19 @@ func (c *Client) GetChannelName(ctx context.Context, channelID string) (string, 
 	return ch.Name, nil
 }
 
+// OpenIM opens (or resumes) a 1:1 direct message channel with the given user
+// and returns the IM channel ID (D…). Idempotent: calling repeatedly with the
+// same user returns the same channel ID.
+func (c *Client) OpenIM(ctx context.Context, userID string) (string, error) {
+	ch, _, _, err := c.api.OpenConversationContext(ctx, &slackgo.OpenConversationParameters{
+		Users: []string{userID},
+	})
+	if err != nil {
+		return "", fmt.Errorf("conversations.open %s: %w", userID, err)
+	}
+	return ch.ID, nil
+}
+
 // Conversation represents a non-channel conversation (DM or MPDM) returned by
 // conversations.list.
 type Conversation struct {

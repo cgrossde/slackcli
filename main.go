@@ -179,6 +179,11 @@ func buildRoot(stdout, stderr io.Writer) *cobra.Command {
 	chatsCmd.GroupID = "main"
 	root.AddCommand(chatsCmd)
 
+	openCmd := cmd.NewOpenCmd()
+	WrapWithPresenter(openCmd, stdout, stderr)
+	openCmd.GroupID = "main"
+	root.AddCommand(openCmd)
+
 	return root
 }
 
@@ -239,9 +244,11 @@ func makeLoginRunE(stdout, stderr io.Writer, isReauth bool) func(*cobra.Command,
 			return errAlreadyPresented
 		}
 
-		// Attempt to discover Enterprise Grid sibling workspaces.  This is best-
-		// effort: failures are logged but do not prevent login from succeeding.
+		// Attempt to discover Enterprise Grid sibling workspaces and the
+		// per-workspace team ID. Both are best-effort: failures are logged but
+		// do not prevent login from succeeding.
 		slackClient := slack.NewClient(creds.Token, creds.Cookie)
+		entryDirty := false
 		if at, authErr := slackClient.AuthTest(); authErr == nil && at.OK && at.EnterpriseID != "" {
 			if grids, gridErr := slackClient.GridWorkspaces(ctx, creds.Workspace); gridErr == nil {
 				domains := make([]string, len(grids))
@@ -250,8 +257,15 @@ func makeLoginRunE(stdout, stderr io.Writer, isReauth bool) func(*cobra.Command,
 				}
 				entry.EnterpriseID = at.EnterpriseID
 				entry.GridWorkspaces = domains
-				_ = keychain.Save(entry) // re-save with grid metadata; non-fatal on failure
+				entryDirty = true
 			}
+		}
+		if teamID, tErr := slackClient.TeamID(ctx, creds.Workspace); tErr == nil {
+			entry.TeamID = teamID
+			entryDirty = true
+		}
+		if entryDirty {
+			_ = keychain.Save(entry) // re-save with backfilled metadata; non-fatal on failure
 		}
 
 		msg := fmt.Sprintf("Credentials saved to Keychain for workspace %q\n", creds.Workspace)

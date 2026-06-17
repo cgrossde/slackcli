@@ -35,7 +35,7 @@ A Slack file permalink URL. Downloads the file to disk. Workspace is inferred fr
 - `--json`: Output messages as NDJSON (one object per line)
 - `--pretty`: Render output with ANSI colours and markdown formatting
 - `-w, --workspace string`: Workspace for `<channelID>:<ts>` references. Defaults to stored default or sole saved workspace.
-- `-o, --output string`: Output path for file downloads. Default: `./<filename>` from the file's name.
+- `-o, --output string`: Output path for file downloads. Default: absolute path in the current working directory (e.g. `/Users/alice/downloads/filename.png`).
 - `--thread-ts string`: Thread root timestamp. When set alongside a `<channelID>:<replyTs>` positional arg, fetches the thread rooted at `threadTs` without an extra API round-trip. Overrides any `threadTs` already embedded in a three-part ref.
 ## Arguments
 `<url|channelID:ts|channelID:threadTs:replyTs|file-permalink>` (required) accepts four forms:
@@ -87,7 +87,7 @@ A Slack file permalink:
 https://myorg.slack.com/files/WH1K7QTFU/F0B3HRU6ZA7/image.png
 ```
 
-Downloads the file using authenticated `files.info` + `url_private`. Saved to `--output` path or `./<filename>` by default. Workspace is extracted from the URL; falls back to the default stored workspace for Slack Enterprise Grid orgs where the file URL domain differs from the login workspace domain.
+Downloads the file using authenticated `files.info` + `url_private`. Saved to `--output` path or the current working directory (absolute path) by default. Workspace is extracted from the URL; falls back to the default stored workspace for Slack Enterprise Grid orgs where the file URL domain differs from the login workspace domain.
 
 ## Output
 
@@ -113,6 +113,23 @@ Author format:
 
 Timestamp: UTC, formatted as `YYYY-MM-DD HH:MM` (no seconds, no timezone label).
 
+#### DM header format
+
+When the channel ID starts with `D` (a direct message), the author field is replaced with a directional label:
+
+```
+== DM: You → PeerName  2026-05-12 14:32 ══════════════════[ message ]==
+Hey, got a minute?
+
+== DM: PeerName → You  2026-05-12 14:33 ══════════════════[ reply 1 ]==
+Sure, what's up?
+
+```
+
+- Message sent by you: `DM: You → PeerName`
+- Message sent by the peer: `DM: PeerName → You`
+- Self-DM (you messaging yourself): `DM: You → Self`
+
 If `--pretty` is set, output includes ANSI colours and markdown formatting.
 
 ### File and reaction output
@@ -132,7 +149,12 @@ When a message has emoji reactions, they appear as:
   Reactions: 👍 3  👌 1
 ```
 
-(plain text uses `:thumbsup: ×3` form)
+In plain text, the format is `:thumbsup: ×3`. When you reacted, a `(you)` annotation is appended:
+- `:thumbsup: ×1 (you)` — you are the sole reactor
+- `:thumbsup: ×4 (you + 3 others)` — you reacted alongside others
+- `:thumbsup: ×4` — others reacted; you did not
+
+In `--json` mode, the `users[]` array on each reaction already carries the full user ID list; no separate annotation is added.
 
 ### Attachment output
 
@@ -153,7 +175,7 @@ The header line combines `author_name` and `title` (separated by ` — `) when b
 When downloading a file:
 
 ```
-Saved: image.png (142938 bytes)
+Saved: /Users/alice/downloads/image.png (142938 bytes)
 [exit:0 | 843ms]
 ```
 

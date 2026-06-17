@@ -106,9 +106,23 @@ const wsGatewayBase = "wss://wss-primary.slack.com/"
 //
 //	wss://wss-primary.slack.com/?token=<xoxc>&gateway_server=<team_id>
 //
-// where team_id is the T… or E… ID of the workspace found in the workspaces
-// array returned by client.userBoot.
+// where team_id is the T… or E… ID of the workspace.
 func (c *Client) GatewayServer(ctx context.Context, workspace string) (string, error) {
+	teamID, err := c.TeamID(ctx, workspace)
+	if err != nil {
+		return "", err
+	}
+	wsURL := wsGatewayBase + "?token=" + url.QueryEscape(c.token) +
+		"&gateway_server=" + url.QueryEscape(teamID)
+	return wsURL, nil
+}
+
+// TeamID resolves the per-workspace team ID (T…) for workspace by calling
+// client.userBoot. workspace must be a bare domain (e.g. "myorg.slack.com").
+//
+// On Enterprise Grid this returns the *member workspace* team ID, not the
+// enterprise ID — the form required by the slack:// deep link scheme.
+func (c *Client) TeamID(ctx context.Context, workspace string) (string, error) {
 	apiURL := fmt.Sprintf("https://%s/api/client.userBoot", workspace)
 
 	form := strings.NewReader("token=" + url.QueryEscape(c.token))
@@ -140,26 +154,17 @@ func (c *Client) GatewayServer(ctx context.Context, workspace string) (string, e
 	// Find the team ID for the requested workspace domain.
 	// workspace is e.g. "myorg.slack.com"; domain in the response is "myorg".
 	wantDomain := strings.TrimSuffix(workspace, ".slack.com")
-	teamID := ""
 	for _, ws := range boot.Workspaces {
 		if ws.Domain == wantDomain || ws.ID == workspace {
-			teamID = ws.ID
-			break
+			return ws.ID, nil
 		}
 	}
-	if teamID == "" {
-		// Fallback: use the first workspace if there is exactly one.
-		if len(boot.Workspaces) == 1 {
-			teamID = boot.Workspaces[0].ID
-		} else {
-			return "", fmt.Errorf("client.userBoot: workspace %q not found in response (domains: %s)",
-				workspace, workspaceDomains(boot.Workspaces))
-		}
+	// Fallback: use the first workspace if there is exactly one.
+	if len(boot.Workspaces) == 1 {
+		return boot.Workspaces[0].ID, nil
 	}
-
-	wsURL := wsGatewayBase + "?token=" + url.QueryEscape(c.token) +
-		"&gateway_server=" + url.QueryEscape(teamID)
-	return wsURL, nil
+	return "", fmt.Errorf("client.userBoot: workspace %q not found in response (domains: %s)",
+		workspace, workspaceDomains(boot.Workspaces))
 }
 
 // workspaceDomains returns a comma-separated list of domains for error messages.

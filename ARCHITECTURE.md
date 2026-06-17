@@ -103,7 +103,7 @@ On any non-zero exit:
 ## Authentication Flow
 
 ```
-internal/browser/   ← Playwright extraction (auth subcommand)
+internal/browser/   ← CDP-based credential extraction (auth subcommand)
 internal/slack/     ← HTTP client with xoxc + xoxd injection
 ```
 
@@ -126,10 +126,14 @@ slackcli/
 ├── cmd/
 │   ├── auth.go                  Layer 1: auth subcommands (Cobra tree + pure functions)
 │   ├── auth_test.go
+│   ├── chats.go                 list recent DMs, MPDMs, channels
+│   ├── chats_test.go
 │   ├── iterm2.go                iTerm2 inline image protocol, terminal size detection
 │   ├── iterm2_test.go
 │   ├── live.go                  stream real-time WebSocket events
 │   ├── live_test.go
+│   ├── open.go                  open Slack targets in the desktop app via slack:// deep links
+│   ├── open_test.go
 │   ├── pretty.go                --pretty ANSI rendering (PrettyThread)
 │   ├── pretty_test.go
 │   ├── read.go                  read a message, thread, or download a file
@@ -156,11 +160,14 @@ slackcli/
 │   └── snippet_test.go
 ├── internal/
 │   ├── browser/
-│   │   └── extractor.go         Playwright session, token/cookie extraction
+│   │   └── extractor.go         CDP-based credential extraction (Chrome DevTools Protocol; no Playwright)
 │   ├── slack/
 │   │   ├── client.go            HTTP client with cookie injection; FetchFileBytes, GetFileInfo
 │   │   ├── auth.go              auth.test
-│   │   ├── conversations.go     conversations.history, conversations.replies; GetHistory; Message.Files, Message.Reactions, Message.Attachments; HistoryParams, HistoryResult
+│   │   ├── conversations.go     conversations.history, conversations.replies; GetHistory; Message.Files, Message.Reactions, Message.Attachments; HistoryParams, HistoryResult; `(*Client).OpenIM(ctx, userID)` — open/resume 1:1 DM
+│   │   ├── deeplink.go          DeepLinkChannel, DeepLinkMessage, DeepLinkFile, DeepLinkWorkspace — pure slack:// URL builders
+│   │   ├── deeplink_test.go
+│   │   ├── grid.go              GridWorkspaces (client.userBoot enumeration)
 │   │   ├── search.go            search.messages
 │   │   ├── channels_search.go   search.modules.channels (channel search + name resolution)
 │   │   ├── url.go               ParseMessageRef, ParseFileRef, IsFileURL; ParseChannelURL, IsChannelURL, ChannelRef
@@ -170,7 +177,7 @@ slackcli/
 │   │   ├── send.go              SendMessage, AddReaction, RemoveReaction, DeleteMessage, ForwardMessage, BuildPermalink; write-allowlist gating
 │   │   ├── whitelist.go         AllowedWriteChannels map; IsWriteAllowed
 │   │   ├── activity.go          activity.feed API — GetActivityFeed; ActivityItem, ActivityFeedResult
-│   │   ├── websocket.go         WebSocket connection for live events; Event.Attachments
+│   │   ├── websocket.go         WebSocket connection for live events; Event.Attachments; `(*Client).TeamID(ctx, ws)` — per-workspace team ID lookup via client.userBoot
 │   │   ├── snippet.go           CreateSnippet, DeleteSnippet; files upload/delete
 │   │   └── snippet_test.go
 │   ├── keychain/
@@ -263,6 +270,7 @@ Full field documentation is in each command's doc file. Quick reference:
 | `live --json` | `type`, `subtype`, `channel_id`, `channel_name`, `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `reaction?`, `item_ts?`, `attachments?` | none |
 | `activity --json` | `type`, `feed_ts`, `is_unread`, `channel_id`, `channel_name`, `ts`, `thread_ts?`, `read_ref`, `user_id`, `username`, `display_name`, `text`, `reaction?`, `reactor_id?`, `reactor_name?` | `_pagination` when more items exist |
 | `history --json` | `user_id`, `username`, `display_name`, `ts`, `thread_ts`, `text`, `is_root`, `reply_count?`, `channel_id`, `channel_type`, `files?`, `reactions?`, `attachments?` | `_pagination` (`next_cursor`) when more messages exist |
+| `chats --json` | `id`, `type`, `name`, `raw_name?`, `peer_id?`, `member_ids?`, `latest_ts?`, `is_starred?`, `has_unreads?`, `mention_count?` | `_pagination` (`next_cursor`) when more items exist |
 
 ---
 

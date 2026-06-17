@@ -164,11 +164,11 @@ slackcli search --users alice --json
 search: "deployment in:#ops after:2024-06-11"
 total: 47  page: 1/3  (20 per page)
 
-[1] #ops · Alice Example (alice) · 2024-06-12 14:32
+[1] Alice Example (alice) → #ops · 2024-06-12 14:32
     We rolled back the deployment after the latency spike.
     → slackcli read C012AB3CD:1718200320.123456
 
-[2] #ops · bob · 2024-06-11 09:17
+[2] bob → #ops · 2024-06-11 09:17
     Deployment window is 22:00 UTC tonight.
     → slackcli read C012AB3CD:1718113037.654321
 
@@ -179,16 +179,32 @@ Tip: slackcli read <channel>:<ts> fetches the full thread
 Tip: pass Slack modifiers in the query — e.g. has:link  has:reaction  is:dm  with:@alice  -word
 ```
 
+For DM conversations, the header uses a directional `DM:` label instead of a channel name:
+
+```
+search: "handover is:dm after:2024-05-17"
+total: 5  page: 1/1  (20 per page)
+
+[1] DM: You → bob · 2024-06-10 11:04
+    Here is the handover doc link.
+    → slackcli read D012AB3CD:1718013840.000100
+
+[2] DM: bob → You · 2024-06-10 11:07
+    Thanks, I'll review it today.
+    → slackcli read D012AB3CD:1718013860.000200
+
+--- page 1 of 1 ---
+Tip: slackcli read <channel>:<ts> fetches the full thread
+Tip: pass Slack modifiers in the query — e.g. has:link  has:reaction  is:dm  with:@alice  -word
+```
+
 Fields per result:
 
 - `[N]` — 1-indexed position within the current page
-- Channel label, author display name (with Slack handle when known), and local timestamp
+- **Channel messages:** `author → #channel · timestamp` — author display name (with Slack handle when known), channel name, and local timestamp
+- **DM messages:** `DM: You → PeerName · timestamp` when you sent the message, or `DM: PeerName → You · timestamp` when they sent it
 - Message text as returned by the API (Slack may truncate long messages server-side)
 - `→ slackcli read <channelID>:<ts>` — the exact command to fetch the full thread
-
-When total results exceed one page, the pagination line includes a ready-to-run next-page command with all active flags reconstructed. When there is no next page the line is just `--- page N of N ---`.
-
-Two tip lines always follow the pagination line: the first reminding callers that `slackcli read` fetches the full thread for any result, and the second documenting the Slack modifiers available in the keyword argument.
 
 When invoked with no keywords and no filter flags, `search` prints help to stdout followed by an error and exits with status 1:
 ```
