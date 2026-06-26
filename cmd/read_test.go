@@ -638,7 +638,7 @@ func TestDmLabel(t *testing.T) {
 func TestResolveDMPeer_nonDM(t *testing.T) {
 	msgs := []slack.Message{{User: "U1"}}
 	// Non-DM channel → always ""
-	got := resolveDMPeer("C0GENERAL", "U1", msgs, nil)
+	got := resolveDMPeer("C0GENERAL", "U1", msgs, nil, nil)
 	if got != "" {
 		t.Errorf("expected empty for non-DM channel, got %q", got)
 	}
@@ -649,7 +649,7 @@ func TestResolveDMPeer_peerFound(t *testing.T) {
 		"UPEER": {ID: "UPEER", Name: "alice", DisplayName: "Alice"},
 	})
 	msgs := []slack.Message{{User: "UPEER"}, {User: "USELF"}}
-	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, cache)
+	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, cache, nil)
 	if got != "Alice" {
 		t.Errorf("expected peer display name 'Alice', got %q", got)
 	}
@@ -658,7 +658,7 @@ func TestResolveDMPeer_peerFound(t *testing.T) {
 func TestResolveDMPeer_selfDM(t *testing.T) {
 	msgs := []slack.Message{{User: "USELF"}}
 	// All messages from self → self-DM → returns "You"
-	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, nil)
+	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, nil, nil)
 	if got != "You" {
 		t.Errorf("expected 'You' for self-DM, got %q", got)
 	}
@@ -666,9 +666,33 @@ func TestResolveDMPeer_selfDM(t *testing.T) {
 
 func TestResolveDMPeer_noSelfID(t *testing.T) {
 	msgs := []slack.Message{{User: "UPEER"}}
-	got := resolveDMPeer("D0B3PCPL0", "", msgs, nil)
+	got := resolveDMPeer("D0B3PCPL0", "", msgs, nil, nil)
 	if got != "" {
 		t.Errorf("expected empty when selfID is empty, got %q", got)
+	}
+}
+
+func TestResolveDMPeer_lookupFallback(t *testing.T) {
+	// All messages from self, but lookupPeer returns a real peer ID:
+	// should resolve via cache, not fall back to "You".
+	cache := slack.NewUserCacheFromMap("x.slack.com", map[string]slack.CachedUser{
+		"UPEER": {ID: "UPEER", Name: "marcus", DisplayName: "Marcus"},
+	})
+	msgs := []slack.Message{{User: "USELF"}}
+	lookup := func() string { return "UPEER" }
+	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, cache, lookup)
+	if got != "Marcus" {
+		t.Errorf("expected 'Marcus' from lookupPeer fallback, got %q", got)
+	}
+}
+
+func TestResolveDMPeer_lookupFallback_selfDM(t *testing.T) {
+	// lookupPeer returns selfID → real self-DM → still "You".
+	msgs := []slack.Message{{User: "USELF"}}
+	lookup := func() string { return "USELF" }
+	got := resolveDMPeer("D0B3PCPL0", "USELF", msgs, nil, lookup)
+	if got != "You" {
+		t.Errorf("expected 'You' for self-DM even with lookupPeer, got %q", got)
 	}
 }
 

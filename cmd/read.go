@@ -6,6 +6,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -308,7 +309,7 @@ func ReadMessage(ref, workspace, threadTs string) (string, error) {
 			selfID = auth.UserID
 		}
 	}
-	dmPeer := resolveDMPeer(resolved.ChannelID, selfID, messages, cache)
+	dmPeer := resolveDMPeer(resolved.ChannelID, selfID, messages, cache, dmPeerLookup(resolved.ChannelID, client))
 
 	var b strings.Builder
 	if resolvedWS != "" && resolvedWS != resolved.Workspace {
@@ -346,7 +347,7 @@ func ReadMessagePretty(ref, workspace, threadTs string) (string, error) {
 			selfID = auth.UserID
 		}
 	}
-	dmPeer := resolveDMPeer(resolved.ChannelID, selfID, messages, cache)
+	dmPeer := resolveDMPeer(resolved.ChannelID, selfID, messages, cache, dmPeerLookup(resolved.ChannelID, client))
 	out, err := PrettyThread(messages, cache, fetcher, selfID, dmPeer)
 	if err != nil {
 		return "", err
@@ -575,7 +576,12 @@ func dmLabel(senderIsSelf bool, senderName, peerName string) string {
 // thread or history result. It scans messages for the first user ID that
 // differs from selfID and resolves it via cache (ShortLabel). Returns "" when
 // selfID is empty, the channel is not a DM, or no peer can be identified.
-func resolveDMPeer(channelID, selfID string, messages []slack.Message, cache *slack.UserCache) string {
+//
+// lookupPeer is an optional fallback called only when all messages are from
+// self (single-message read or self-only thread). It should return the peer's
+// user ID (e.g. from conversations.info). Pass nil to fall back to "You" (real
+// self-DMs) as before.
+func resolveDMPeer(channelID, selfID string, messages []slack.Message, cache *slack.UserCache, lookupPeer func() string) string {
 	if selfID == "" || len(channelID) == 0 || channelID[0] != 'D' {
 		return ""
 	}
@@ -590,12 +596,40 @@ func resolveDMPeer(channelID, selfID string, messages []slack.Message, cache *sl
 		}
 		return m.User
 	}
-	// All messages are from self (self-DM or single-message thread). Return
-	// "You" so dmLabel can produce "DM: You → Self".
+	// All messages are from self — could be a real self-DM or a DM with
+	// someone else where only self spoke. Ask the API for the peer ID first.
 	if len(messages) > 0 {
+		if lookupPeer != nil {
+			if peerID := lookupPeer(); peerID != "" && peerID != selfID {
+				// Resolve the peer ID to a display name via cache.
+				if cache != nil {
+					if u, err := cache.GetUser(peerID); err == nil {
+						return u.ShortLabel()
+					}
+				}
+				return peerID
+			}
+		}
 		return "You"
 	}
 	return ""
+}
+
+// dmPeerLookup returns a lookupPeer func for resolveDMPeer. It calls
+// conversations.info exactly once (lazily) to retrieve the peer user ID for
+// a DM channel when the message list alone cannot determine the peer.
+// Returns nil when client is nil or channelID is not a DM.
+func dmPeerLookup(channelID string, client *slack.Client) func() string {
+	if client == nil || len(channelID) == 0 || channelID[0] != 'D' {
+		return nil
+	}
+	return func() string {
+		peerID, err := client.GetChannelName(context.Background(), channelID)
+		if err != nil {
+			return ""
+		}
+		return peerID
+	}
 }
 
 // readMessageJSON is the JSON representation of one message in a thread.

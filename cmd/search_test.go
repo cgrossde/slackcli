@@ -430,6 +430,40 @@ func TestFormatSearchResults_singleMatch(t *testing.T) {
 	}
 }
 
+func TestFormatSearchResults_threadReplyHint(t *testing.T) {
+	result := slack.SearchResult{
+		Query: "deployment",
+		Total: 1,
+		Page:  1,
+		Pages: 1,
+		Count: 20,
+		Matches: []slack.SearchMatch{
+			{
+				ChannelID:   "C012ABC",
+				ChannelName: "ops",
+				UserID:      "UABC123",
+				Username:    "alice",
+				Ts:          "1718200400.000001",
+				ThreadTs:    "1718200320.123456",
+				Text:        "agreed",
+			},
+		},
+	}
+	got := formatSearchResults(result, nil, SearchFlags{Count: 20}, "")
+
+	// A thread reply must emit the three-part channelID:threadTs:replyTs form
+	// so that `slackcli read` and `slackcli open` can supply thread_ts.
+	want := "slackcli read C012ABC:1718200320.123456:1718200400.000001"
+	if !strings.Contains(got, want) {
+		t.Errorf("missing three-part read ref in output: %q", got)
+	}
+	// Must NOT emit the two-part form for a reply.
+	twopart := "slackcli read C012ABC:1718200400.000001"
+	if strings.Contains(got, twopart) {
+		t.Errorf("should not emit two-part ref for a thread reply: %q", got)
+	}
+}
+
 func TestFormatSearchResults_paginationFooter(t *testing.T) {
 	result := slack.SearchResult{
 		Query: "deploy",

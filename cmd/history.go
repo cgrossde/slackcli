@@ -153,7 +153,7 @@ func History(args []string, flags HistoryFlags) (string, error) {
 			selfID = auth.UserID
 		}
 	}
-	dmPeer := resolveDMPeer(channelID, selfID, result.Messages, cache)
+	dmPeer := resolveDMPeer(channelID, selfID, result.Messages, cache, dmPeerLookup(channelID, client))
 	return formatHistoryPlain(result, channelID, cache, selfID, dmPeer), nil
 }
 
@@ -173,7 +173,7 @@ func HistoryPretty(args []string, flags HistoryFlags) (string, error) {
 			selfID = auth.UserID
 		}
 	}
-	dmPeer := resolveDMPeer(channelID, selfID, result.Messages, cache)
+	dmPeer := resolveDMPeer(channelID, selfID, result.Messages, cache, dmPeerLookup(channelID, client))
 	out, err := PrettyThread(result.Messages, cache, fetcher, selfID, dmPeer)
 	if err != nil {
 		return "", err

@@ -516,7 +516,11 @@ func formatSearchResults(result slack.SearchResult, cache *slack.UserCache, flag
 		fmt.Fprintf(&sb, "%s\n", indented)
 
 		if m.ChannelID != "" && m.Ts != "" {
-			fmt.Fprintf(&sb, "    → slackcli read %s:%s\n", m.ChannelID, m.Ts)
+			if m.ThreadTs != "" {
+				fmt.Fprintf(&sb, "    → slackcli read %s:%s:%s\n", m.ChannelID, m.ThreadTs, m.Ts)
+			} else {
+				fmt.Fprintf(&sb, "    → slackcli read %s:%s\n", m.ChannelID, m.Ts)
+			}
 		}
 		sb.WriteString("\n")
 	}
