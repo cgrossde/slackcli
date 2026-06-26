@@ -274,6 +274,35 @@ Full field documentation is in each command's doc file. Quick reference:
 
 ---
 
+## Write Allowlist
+
+`send`, `react`, `delete`, `forward`, and `snippet create` enforce a hard allowlist before any API call is made. The allowlist lives in `internal/slack/whitelist.go` (`AllowedWriteChannels map`) and is populated at init time from `internal/slack/allowlist.txt`, embedded into the binary at build time via `//go:embed`.
+
+The file is gitignored — it never ships in the repository. An absent or empty `allowlist.txt` causes all write operations to be denied immediately; the binary is safe to distribute without it.
+
+```
+# internal/slack/allowlist.txt  (gitignored)
+CXXXXXXXXXX  # #agent-notifications
+CYYYYYYYYYY  # #team-alerts
+```
+
+Find a channel ID in Slack: open the channel → click the channel name → scroll to the bottom of the About panel.
+
+Attempting to write to an unlisted channel returns an error without loading credentials or making any network call.
+
+**Why the allowlist exists.** Two reasons, both deliberate:
+
+First, replies and messages to colleagues should come from a human. An agent that silently posts into a shared channel or a 1:1 DM on your behalf — even with good intentions — erodes the trust that makes those conversations work. The allowlist forces a conscious decision: you choose which conversations an agent is permitted to write into.
+
+Second, it prevents a runaway agent from causing damage at scale. Without a hard gate, a misbehaving or prompt-injected agent could spam channels, impersonate you in DMs, or flood a thread before anyone notices. The allowlist is the simplest possible circuit breaker: if the target is not on the list, nothing happens.
+
+The intended pattern is a dedicated **agent notification channel** or a **test channel** added to the allowlist — a contained surface where automated output is expected and accepted by everyone in it.
+
+**Files:**
+- `internal/slack/whitelist.go` — `AllowedWriteChannels map[string]bool`, `IsWriteAllowed(channelID)`
+- `internal/slack/allowlist.txt` — gitignored; embed source; one channel ID per line; inline `# comments` stripped
+- `internal/slack/allowlist.txt.example` — template; copy to `allowlist.txt` and populate before building
+
 ## Reference
 
 The two-layer model and the Unix-as-agent-interface pattern originate from production experience at Manus (2024–2025). Full rationale in the knowledge base:

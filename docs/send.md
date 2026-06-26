@@ -10,12 +10,40 @@ slackcli send [message | channelID:ts | url] [flags]
 
 The positional argument is interpreted as:
 - A **Slack permalink URL** — channel ID and thread timestamp are extracted; used as the post target
-- A **`channelID:ts`** string (e.g. `C0B3PCPL0CF:1718197925.001234`) — channel ID and thread timestamp are extracted; used as the post target
+- A **`channelID:ts`** string (e.g. `CXXXXXXXXXX:1718197925.001234`) — channel ID and thread timestamp are extracted; used as the post target
 - Any other string — treated as the **inline message body**
 
 ## Description
 
 Posts a message to a Slack channel. Only channels in the write allowlist (configured in `internal/slack/allowlist.txt` at build time) may receive messages. Attempts to post to any other channel are rejected before any API call is made.
+
+## Write allowlist
+
+`send` (and all other write commands: `react`, `delete`, `forward`, `snippet create`) enforce an allowlist before making any API call. The allowlist is defined in `internal/slack/allowlist.txt` — a plain-text file embedded into the binary at build time. It is gitignored and never ships in the repository.
+
+Add one channel ID per line before building:
+
+```sh
+cp internal/slack/allowlist.txt.example internal/slack/allowlist.txt
+# then edit it and add your channel IDs
+```
+
+If `allowlist.txt` is absent or empty, all write operations are denied immediately — the binary is safe to distribute without it.
+
+Attempting to send to an unlisted channel exits with:
+
+```
+channel "CXXXXXXXXXX" is not in the write allowlist
+[exit:1 | 2ms]
+```
+
+**Why the allowlist exists.** Two reasons, both deliberate:
+
+First, replies and messages to colleagues should come from a human. An agent that silently posts into a shared channel or a 1:1 DM on your behalf — even with good intentions — erodes the trust that makes those conversations work. The allowlist forces a conscious decision: you choose which conversations an agent is permitted to write into.
+
+Second, it prevents a runaway agent from causing damage at scale. Without a hard gate, a misbehaving or prompt-injected agent could spam channels, impersonate you in DMs, or flood a thread before anyone notices. The allowlist is the simplest possible circuit breaker: if the target is not on the list, nothing happens.
+
+The intended pattern is a dedicated **agent notification channel** or a **test channel** added to the allowlist — a contained surface where automated output is expected and accepted by everyone in it.
 
 ## Message Body
 
@@ -34,7 +62,7 @@ The channel to post to is resolved in this order:
 ### Slack permalink URL (positional)
 
 ```
-https://myorg.slack.com/archives/C0B3PCPL0CF/p1718197925001234
+https://myorg.slack.com/archives/CXXXXXXXXXX/p1718197925001234
 ```
 
 Channel ID and thread timestamp are extracted from the URL. `--channel` is ignored. The message is posted as a reply to that thread unless `--thread` is also supplied (which would override the extracted timestamp).
@@ -42,7 +70,7 @@ Channel ID and thread timestamp are extracted from the URL. `--channel` is ignor
 ### `channelID:ts` (positional)
 
 ```
-C0B3PCPL0CF:1718197925.001234
+CXXXXXXXXXX:1718197925.001234
 ```
 
 Channel ID and thread timestamp are extracted from the string. Behaviour is identical to the URL form above.
@@ -64,8 +92,8 @@ When neither a URL nor `channelID:ts` positional argument is provided, `--channe
 ## Output
 
 ```
-Sent: C0B3PCPL0CF ts=1718197925.001234
-Reacted: :white_check_mark: on C0B3PCPL0CF ts=1718197925.001234
+Sent: CXXXXXXXXXX ts=1718197925.001234
+Reacted: :white_check_mark: on CXXXXXXXXXX ts=1718197925.001234
 [exit:0 | 504ms]
 ```
 
@@ -75,34 +103,34 @@ The first block shows the channel and timestamp of the posted message. When `--r
 
 ```bash
 # Inline text
-slackcli send "hello team" --channel C0B3PCPL0CF
+slackcli send "hello team" --channel CXXXXXXXXXX
 
 # Piped stdin
-echo "deployment complete" | slackcli send --channel C0B3PCPL0CF
+echo "deployment complete" | slackcli send --channel CXXXXXXXXXX
 
 # File
-slackcli send --file report.txt --channel C0B3PCPL0CF
+slackcli send --file report.txt --channel CXXXXXXXXXX
 
 # Reply in thread via Slack URL (positional)
-slackcli send "looks good" https://myorg.slack.com/archives/C0B3PCPL0CF/p1718197925001234
+slackcli send "looks good" https://myorg.slack.com/archives/CXXXXXXXXXX/p1718197925001234
 
 # Reply in thread via channelID:ts (positional)
-slackcli send "looks good" C0B3PCPL0CF:1718197925.001234
+slackcli send "looks good" CXXXXXXXXXX:1718197925.001234
 
 # Markdown conversion from piped stdin
-cat release-notes.md | slackcli send --channel C0B3PCPL0CF --md
+cat release-notes.md | slackcli send --channel CXXXXXXXXXX --md
 
 # Reply in thread using --thread flag
-slackcli send "follow-up" --channel C0B3PCPL0CF --thread 1718197925.001234
+slackcli send "follow-up" --channel CXXXXXXXXXX --thread 1718197925.001234
 
 # React to the sent message with a checkmark
-slackcli send "done" --channel C0B3PCPL0CF --react white_check_mark
+slackcli send "done" --channel CXXXXXXXXXX --react white_check_mark
 
 # Colons in the emoji name are stripped automatically
-slackcli send "done" --channel C0B3PCPL0CF --react :white_check_mark:
+slackcli send "done" --channel CXXXXXXXXXX --react :white_check_mark:
 
 # Suppress link preview
-slackcli send "check this out https://example.com" --channel C0B3PCPL0CF --no-preview
+slackcli send "check this out https://example.com" --channel CXXXXXXXXXX --no-preview
 ```
 ## Markdown Conversion (`--md`)
 

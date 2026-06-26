@@ -33,9 +33,7 @@ go build -o slackcli .
 
 ### Write allowlist
 
-`send`, `react`, `delete`, `forward`, and `snippet` only write to channels you
-explicitly permit. The allowlist is a plain text file embedded into the binary at
-build time — it never ships in the repository.
+`send`, `react`, `delete`, `forward`, and `snippet` only write to channels you explicitly permit. The allowlist is a plain-text file embedded into the binary at build time — it never ships in the repository.
 
 ```sh
 cp internal/slack/allowlist.txt.example internal/slack/allowlist.txt
@@ -48,12 +46,27 @@ C0123456789  # #general
 C9876543210  # #team-alerts
 ```
 
-Find a channel's ID in Slack: open the channel → click the channel name →
-scroll to the bottom of the About panel.
+Find a channel's ID in Slack: open the channel → click the channel name → scroll to the bottom of the About panel.
 
-An empty or absent `allowlist.txt` (the default in a clean checkout) causes all
-write operations to be denied — the binary is safe to build and share without it.
-Rebuild after any change to the file.
+An empty or absent `allowlist.txt` (the default in a clean checkout) causes all write operations to be denied — the binary is safe to build and share without it. Rebuild after any change to the file.
+
+**Why the allowlist exists.** Two reasons, both deliberate:
+
+First, replies and messages to colleagues should come from a human. An agent that silently posts into a shared channel or a 1:1 DM on your behalf — even with good intentions — erodes the trust that makes those conversations work. The allowlist forces a conscious decision: you choose which conversations an agent is permitted to write into.
+
+Second, it prevents a runaway agent from causing damage at scale. Without a hard gate, a misbehaving or prompt-injected agent could spam channels, impersonate you in DMs, or flood a thread before anyone notices. The allowlist is the simplest possible circuit breaker: if the target is not on the list, nothing happens.
+
+The intended pattern is a dedicated **agent notification channel** or a **test channel** added to the allowlist — a contained surface where automated output is expected and accepted by everyone in it.
+
+## First run
+
+```sh
+slackcli setup
+```
+
+Walks through two steps: authenticates with Slack (skipped if credentials are already valid), then optionally installs the Claude/OpenCode skill (`~/.claude/skills/slackcli/SKILL.md`) so an LLM agent can use `slackcli` without reading any docs.
+
+Run `slackcli setup --install-skill` at any time to update the skill without re-authenticating.
 
 ## Quick start
 
@@ -78,8 +91,8 @@ slackcli live --workspace myorg.slack.com
 slackcli live --mention   # only events that mention you
 
 # Post a message
-slackcli send "hello team" --channel C0B3PCPL0CF
-echo "report" | slackcli send --channel C0B3PCPL0CF --md
+slackcli send "hello team" --channel CXXXXXXXXXX
+echo "report" | slackcli send --channel CXXXXXXXXXX --md
 ```
 
 ## Commands

@@ -1,4 +1,4 @@
-slackcli
+/slackcli
 /tmp/
 *.test
 probe_*
