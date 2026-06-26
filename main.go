@@ -1,6 +1,8 @@
 package main
 
 import (
+	_ "embed"
+
 	"bytes"
 	"context"
 	"errors"
@@ -21,6 +23,9 @@ import (
 	"github.com/cgrossde/slackcli/internal/slack"
 )
 
+//go:embed .claude/skills/slackcli/SKILL.md
+var skillMD []byte
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -34,10 +39,8 @@ func main() {
 // stderr receives progress messages and slog output.
 // Any error returned by Cobra (flag errors, unknown commands) is formatted
 // through the presenter so the caller always gets a [exit:N | Xms] footer.
-// errAlreadyPresented is returned by RunE implementations that have already
-// written formatted output through the presenter. run() recognises this and
-// exits non-zero without writing a second presenter block.
-var errAlreadyPresented = errors.New("already presented")
+// cmd.ErrAlreadyPresented is returned by RunE implementations that have already
+// written formatted output; run() exits non-zero without a second presenter block.
 
 func run(args []string, stdout, stderr io.Writer) error {
 	logLevel := slog.LevelInfo
@@ -55,9 +58,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err == nil {
 		return nil
 	}
-	// errAlreadyPresented means a RunE already wrote the formatted output.
+	// cmd.ErrAlreadyPresented means a RunE already wrote the formatted output.
 	// Exit non-zero without a second presenter block.
-	if errors.Is(err, errAlreadyPresented) {
+	if errors.Is(err, cmd.ErrAlreadyPresented) {
 		return err
 	}
 	// context.Canceled means Ctrl+C — propagate as-is so main() can exit 130.
@@ -184,6 +187,10 @@ func buildRoot(stdout, stderr io.Writer) *cobra.Command {
 	openCmd.GroupID = "main"
 	root.AddCommand(openCmd)
 
+	setupCmd := cmd.NewSetupCmd(stdout, makeSetupLoginFunc(stdout), skillMD)
+	setupCmd.GroupID = "main"
+	root.AddCommand(setupCmd)
+
 	return root
 }
 
@@ -227,7 +234,7 @@ func makeLoginRunE(stdout, stderr io.Writer, isReauth bool) func(*cobra.Command,
 				ExitCode: 1,
 				Elapsed:  elapsed,
 			})
-			return errAlreadyPresented
+			return cmd.ErrAlreadyPresented
 		}
 
 		entry := keychain.Entry{
@@ -241,7 +248,7 @@ func makeLoginRunE(stdout, stderr io.Writer, isReauth bool) func(*cobra.Command,
 				ExitCode: 1,
 				Elapsed:  elapsed,
 			})
-			return errAlreadyPresented
+			return cmd.ErrAlreadyPresented
 		}
 
 		// Attempt to discover Enterprise Grid sibling workspaces and the
@@ -273,6 +280,48 @@ func makeLoginRunE(stdout, stderr io.Writer, isReauth bool) func(*cobra.Command,
 			Stdout:  msg,
 			Elapsed: elapsed,
 		}))
+		return nil
+	}
+}
+
+// makeSetupLoginFunc returns a cmd.LoginFunc for use by the setup wizard.
+// It runs the same browser-extraction flow as makeLoginRunE but writes
+// progress directly to stdout and returns a plain error (no presenter footer).
+func makeSetupLoginFunc(stdout io.Writer) cmd.LoginFunc {
+	return func(ctx context.Context, workspace string) error {
+		creds, err := browser.Extract(ctx, workspace, browser.Options{})
+		if err != nil {
+			return err
+		}
+		entry := keychain.Entry{
+			Workspace: creds.Workspace,
+			Token:     creds.Token,
+			Cookie:    creds.Cookie,
+		}
+		if saveErr := keychain.Save(entry); saveErr != nil {
+			return fmt.Errorf("saving credentials: %w", saveErr)
+		}
+		slackClient := slack.NewClient(creds.Token, creds.Cookie)
+		entryDirty := false
+		if at, authErr := slackClient.AuthTest(); authErr == nil && at.OK && at.EnterpriseID != "" {
+			if grids, gridErr := slackClient.GridWorkspaces(ctx, creds.Workspace); gridErr == nil {
+				domains := make([]string, len(grids))
+				for i, g := range grids {
+					domains[i] = g.Domain + ".slack.com"
+				}
+				entry.EnterpriseID = at.EnterpriseID
+				entry.GridWorkspaces = domains
+				entryDirty = true
+			}
+		}
+		if teamID, tErr := slackClient.TeamID(ctx, creds.Workspace); tErr == nil {
+			entry.TeamID = teamID
+			entryDirty = true
+		}
+		if entryDirty {
+			_ = keychain.Save(entry)
+		}
+		fmt.Fprintf(stdout, "✓ Credentials saved for workspace %q\n", creds.Workspace)
 		return nil
 	}
 }
@@ -315,26 +364,26 @@ func WrapWithPresenter(c *cobra.Command, finalOut io.Writer, finalErr io.Writer)
 	// Override HelpFunc: temporarily point the command's output at finalOut so
 	// cobra's default template (usage + flags + Long) is written there directly.
 	defaultHelp := c.HelpFunc()
-	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		cmd.SetOut(finalOut)
-		defaultHelp(cmd, args)
-		cmd.SetOut(&buf)
+	c.SetHelpFunc(func(hc *cobra.Command, args []string) {
+		hc.SetOut(finalOut)
+		defaultHelp(hc, args)
+		hc.SetOut(&buf)
 	})
 
-	c.RunE = func(cmd *cobra.Command, args []string) error {
+	c.RunE = func(rc *cobra.Command, args []string) error {
 		start := time.Now()
-		err := original(cmd, args)
+		err := original(rc, args)
 		elapsed := time.Since(start)
 
 		// JSON mode: bypass the presenter entirely.
 		// NDJSON consumers use exit code for errors; the footer would corrupt the stream.
-		if jsonMode, _ := cmd.Flags().GetBool("json"); jsonMode {
+		if jsonMode, _ := rc.Flags().GetBool("json"); jsonMode {
 			if buf.Len() > 0 {
 				fmt.Fprint(finalOut, buf.String())
 			}
 			if err != nil {
-				fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-				return errAlreadyPresented
+				fmt.Fprintln(rc.ErrOrStderr(), err.Error())
+				return cmd.ErrAlreadyPresented
 			}
 			return nil
 		}
@@ -346,7 +395,7 @@ func WrapWithPresenter(c *cobra.Command, finalOut io.Writer, finalErr io.Writer)
 			stderrStr = err.Error()
 			// Print help before the error so the caller knows what to supply.
 			// HelpFunc writes directly to finalOut (see SetHelpFunc above).
-			cmd.HelpFunc()(cmd, args)
+			rc.HelpFunc()(rc, args)
 			fmt.Fprintln(finalOut)
 		}
 
@@ -357,10 +406,10 @@ func WrapWithPresenter(c *cobra.Command, finalOut io.Writer, finalErr io.Writer)
 			Elapsed:  elapsed,
 		})
 
-		// Return errAlreadyPresented: we've written the formatted output and
+		// Return ErrAlreadyPresented: we've written the formatted output and
 		// need run() to exit non-zero, but without writing a second presenter block.
 		if err != nil {
-			return errAlreadyPresented
+			return cmd.ErrAlreadyPresented
 		}
 		return nil
 	}
@@ -395,7 +444,7 @@ func makeLiveRunE(stdout, stderr io.Writer) func(*cobra.Command, []string) error
 				ExitCode: 1,
 				Elapsed:  0,
 			})
-				return errAlreadyPresented
+				return cmd.ErrAlreadyPresented
 			}
 		} else {
 			workspace = cmd.CanonicalDomain(workspace)
@@ -408,7 +457,7 @@ func makeLiveRunE(stdout, stderr io.Writer) func(*cobra.Command, []string) error
 				ExitCode: 1,
 				Elapsed:  0,
 			})
-			return errAlreadyPresented
+			return cmd.ErrAlreadyPresented
 		}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -431,7 +480,7 @@ func makeLiveRunE(stdout, stderr io.Writer) func(*cobra.Command, []string) error
 				ExitCode: 1,
 				Elapsed:  0,
 			})
-			return errAlreadyPresented
+			return cmd.ErrAlreadyPresented
 		}
 
 		filter := cmd.LiveFilter{
@@ -456,7 +505,7 @@ func makeLiveRunE(stdout, stderr io.Writer) func(*cobra.Command, []string) error
 				ExitCode: 1,
 				Elapsed:  0,
 			})
-				return errAlreadyPresented
+				return cmd.ErrAlreadyPresented
 			}
 			filter.SelfUserID = authResult.UserID
 			selfID := authResult.UserID
@@ -573,7 +622,7 @@ func makeLiveRunE(stdout, stderr io.Writer) func(*cobra.Command, []string) error
 		if jsonMode {
 			if stderrMsg != "" {
 				fmt.Fprintln(stderr, stderrMsg)
-				return errAlreadyPresented
+				return cmd.ErrAlreadyPresented
 			}
 			return nil
 		}
@@ -583,6 +632,6 @@ func makeLiveRunE(stdout, stderr io.Writer) func(*cobra.Command, []string) error
 			ExitCode: exitCode,
 			Elapsed:  time.Since(start),
 		})
-		return errAlreadyPresented
+		return cmd.ErrAlreadyPresented
 	}
 }
