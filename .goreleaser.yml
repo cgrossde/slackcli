@@ -37,7 +37,7 @@ homebrew_casks:
       - slackcli
     repository:
       owner: cgrossde
-      name: homebrew
+      name: homebrew-homebrew
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
