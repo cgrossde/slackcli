@@ -1,0 +1,4 @@
+# Write-allowlist — add your channel IDs here, one per line.
+# See allowlist.txt.example for format details.
+C0B3PCPL0CF  # #ctb
+C0B3Z1KT80K  # #ctb-queue
