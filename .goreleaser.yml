@@ -23,6 +23,8 @@ builds:
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - completions/*
 
 release:
   github:
@@ -44,11 +46,10 @@ homebrew_casks:
     homepage: "https://github.com/cgrossde/slackcli"
     description: "Slack CLI optimized for usage by LLMs or in scripts"
     license: "MIT"
-    generate_completions_from_executable:
-      executable: "bin/slackcli"
-      args:
-        - completion
-      shell_parameter_format: cobra
+    completions:
+      bash: completions/slackcli.bash
+      zsh: completions/slackcli.zsh
+      fish: completions/slackcli.fish
     hooks:
       post:
         install: |

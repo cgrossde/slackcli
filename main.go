@@ -91,6 +91,10 @@ func buildRoot(stdout, stderr io.Writer) *cobra.Command {
 		Short:         "Interact with Slack using browser-extracted credentials",
 		SilenceUsage:  true, // don't dump usage on every RunE error
 		SilenceErrors: true, // we handle error printing ourselves via the presenter
+		// ArbitraryArgs lets the root accept `slackcli <subcmd>` without cobra
+		// rejecting it; cobra already lists all subcommands (with descriptions)
+		// in its built-in completion logic — no ValidArgsFunction needed.
+		Args: cobra.ArbitraryArgs,
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
