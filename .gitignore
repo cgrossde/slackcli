@@ -1,4 +1,5 @@
 /slackcli
+dist/
 /tmp/
 *.test
 probe_*

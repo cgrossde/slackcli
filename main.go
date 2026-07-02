@@ -191,6 +191,12 @@ func buildRoot(stdout, stderr io.Writer) *cobra.Command {
 	setupCmd.GroupID = "main"
 	root.AddCommand(setupCmd)
 
+	// version — print build version.
+	versionCmd := cmd.NewVersionCmd()
+	WrapWithPresenter(versionCmd, stdout, stderr)
+	versionCmd.GroupID = "main"
+	root.AddCommand(versionCmd)
+
 	return root
 }
 
