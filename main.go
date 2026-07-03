@@ -91,10 +91,18 @@ func buildRoot(stdout, stderr io.Writer) *cobra.Command {
 		Short:         "Interact with Slack using browser-extracted credentials",
 		SilenceUsage:  true, // don't dump usage on every RunE error
 		SilenceErrors: true, // we handle error printing ourselves via the presenter
-		// ArbitraryArgs lets the root accept `slackcli <subcmd>` without cobra
-		// rejecting it; cobra already lists all subcommands (with descriptions)
-		// in its built-in completion logic — no ValidArgsFunction needed.
-		Args: cobra.ArbitraryArgs,
+		// Args replicates cobra's default legacyArgs behaviour (reject unknown
+		// subcommands on root) but carves out an exception for the __complete
+		// request so root-level TAB completion works without a ValidArgsFunction.
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 && args[0] == cobra.ShellCompRequestCmd {
+				return nil
+			}
+			if cmd.HasParent() || !cmd.HasSubCommands() || len(args) == 0 {
+				return nil
+			}
+			return fmt.Errorf("unknown command %q for %q%s", args[0], cmd.CommandPath(), cmd.SuggestionsFor(args[0]))
+		},
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -354,33 +362,29 @@ func makeSetupLoginFunc(stdout io.Writer) cmd.LoginFunc {
 // WrapWithPresenter wraps a *cobra.Command's RunE so its output passes through
 // the Layer 2 presenter. Call this on leaf commands that should have the footer.
 //
-// The wrapped command's OutOrStdout() must already be set to a *bytes.Buffer
-// before Execute() runs so we can capture the output.
-//
-// --help bypasses RunE entirely: cobra writes help to cmd.OutOrStdout() and
-// returns nil from Execute() without ever calling RunE. We intercept this by
-// setting a custom HelpFunc that writes directly to finalOut so the caller
-// always sees help output regardless of the buffer redirect.
+// The stdout redirect (c.SetOut) is applied lazily inside RunE — not at setup
+// time — so that cobra's __complete command can write flag/subcommand completions
+// to the real stdout unobstructed.
 func WrapWithPresenter(c *cobra.Command, finalOut io.Writer, finalErr io.Writer) {
 	original := c.RunE
 	if original == nil {
 		return
 	}
-	var buf bytes.Buffer
-	c.SetOut(&buf)
-
-	// Cobra's --help handler calls c.HelpFunc()(c, args) and writes the result
-	// to c.OutOrStdout(). Since we redirect that to buf, help would be swallowed.
-	// Override HelpFunc: temporarily point the command's output at finalOut so
-	// cobra's default template (usage + flags + Long) is written there directly.
-	defaultHelp := c.HelpFunc()
-	c.SetHelpFunc(func(hc *cobra.Command, args []string) {
-		hc.SetOut(finalOut)
-		defaultHelp(hc, args)
-		hc.SetOut(&buf)
-	})
 
 	c.RunE = func(rc *cobra.Command, args []string) error {
+		// Redirect stdout to buf for this invocation only.
+		var buf bytes.Buffer
+		rc.SetOut(&buf)
+
+		// Cobra's --help handler writes to c.OutOrStdout(). Since we've redirected
+		// that to buf, override HelpFunc to write directly to finalOut instead.
+		defaultHelp := rc.HelpFunc()
+		rc.SetHelpFunc(func(hc *cobra.Command, hargs []string) {
+			hc.SetOut(finalOut)
+			defaultHelp(hc, hargs)
+			hc.SetOut(&buf)
+		})
+
 		start := time.Now()
 		err := original(rc, args)
 		elapsed := time.Since(start)
