@@ -14,11 +14,27 @@ A Unix CLI tool that gives an AI agent programmatic access to Slack — reading 
 
 ## Install
 
+### Homebrew (recommended)
+
+```sh
+brew tap cgrossde/tap
+brew trust cgrossde/tap
+brew install slackcli
+```
+
+Homebrew installs the binary to `/opt/homebrew/bin` and wires up shell completions automatically. Run `brew upgrade slackcli` (or `brew upgrade`) to get new versions.
+
+**Note:** the Homebrew build ships with an empty write allowlist — `send`, `react`, `delete`, `forward`, and `snippet` will refuse to write until you build from source with your own allowlist (see below).
+
+### Go install
+
 ```sh
 go install github.com/cgrossde/slackcli@latest
 ```
 
-Or build from source:
+Requires Go 1.21+. The binary lands in `$GOPATH/bin` (usually `~/.go/bin` or `~/go/bin`) — make sure that's on your `$PATH`. Same allowlist caveat as Homebrew.
+
+### Build from source
 
 ```sh
 git clone git@github.com:cgrossde/slackcli.git
