@@ -50,35 +50,73 @@ func TestChatsTypes(t *testing.T) {
 	}
 }
 
-// TestResolveMpdmName verifies MPDM name parsing from raw Slack name.
+// TestResolveMpdmName verifies MPDM name resolution: cache hit, cache miss
+// (no enterprise ID → raw handle fallback), and the member-IDs path.
 func TestResolveMpdmName(t *testing.T) {
+	cache := slack.NewUserCacheFromMap("test.slack.com", map[string]slack.CachedUser{
+		"W1": {ID: "W1", Name: "u100001", DisplayName: "Alice Example"},
+		"W2": {ID: "W2", Name: "u100002", DisplayName: "Bob Example"},
+		"U3": {ID: "U3", Name: "u100003", DisplayName: "Carol Example"},
+	})
+
 	tests := []struct {
+		desc    string
 		rawName string
+		members []string
+		cache   *slack.UserCache
 		want    string
 	}{
-		{"mpdm-alice--bob--carol-1", "alice, bob, carol"},
-		{"mpdm-d072584--d070402-1", "d072584, d070402"},
-		{"mpdm-gregor.hollmig--d070465--d070402-1", "gregor.hollmig, d070465, d070402"},
+		// No cache → raw handles, no resolution attempted.
+		{
+			desc:    "no cache, raw handles",
+			rawName: "mpdm-alice--bob--carol-1",
+			want:    "alice, bob, carol",
+		},
+		{
+			desc:    "no cache, employee-ID handles",
+			rawName: "mpdm-u100001--u100002-1",
+			want:    "u100001, u100002",
+		},
+		// Cache present, handles known → display names.
+		{
+			desc:    "all handles in cache",
+			rawName: "mpdm-u100001--u100002--u100003-1", cache: cache,
+			want: "Alice Example, Bob Example, Carol Example",
+		},
+		// Cache present, one handle unknown and no enterpriseID → raw fallback.
+		{
+			desc:    "one handle unknown, no enterpriseID → raw",
+			rawName: "mpdm-u100001--unknown-1", cache: cache,
+			want: "Alice Example, unknown",
+		},
+		// member IDs path (Conversation.Members populated) always resolves via GetUser.
+		{
+			desc:    "member IDs path",
+			rawName: "", members: []string{"W1", "W2"}, cache: cache,
+			want: "@Alice Example, @Bob Example",
+		},
 	}
+
 	for _, tc := range tests {
-		got := resolveMpdmName(tc.rawName, nil, nil)
-		if got != tc.want {
-			t.Errorf("resolveMpdmName(%q) = %q, want %q", tc.rawName, got, tc.want)
-		}
+		t.Run(tc.desc, func(t *testing.T) {
+			got := resolveMpdmName(tc.rawName, tc.members, tc.cache, "")
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
 // TestBuildChatEntries verifies that buildChatEntries preserves the order of
 // its input slice and does NOT sort (sorting is the caller's responsibility).
 func TestBuildChatEntries(t *testing.T) {
-	// Input is pre-sorted descending; we verify the output order is preserved.
 	convs := []slack.Conversation{
 		{ID: "D002", IsIM: true, User: "U002", LatestTs: "1780000000.000000"},
 		{ID: "C003", IsMpIM: true, Name: "mpdm-a--b-1", LatestTs: "1500000000.000000"},
 		{ID: "D001", IsIM: true, User: "U001", LatestTs: "1000000000.000000"},
 		{ID: "D004", IsIM: true, User: "U004", LatestTs: ""}, // no messages
 	}
-	entries := buildChatEntries(convs, nil)
+	entries := buildChatEntries(convs, nil, "")
 
 	if len(entries) != 4 {
 		t.Fatalf("expected 4 entries, got %d", len(entries))
