@@ -147,5 +147,5 @@ slackcli chats --type channel -w myorg
 
 - **`all` / `dm` / `mpdm`** — resolved via `users.conversations` (`ListConversations` in `internal/slack/conversations.go`). Faster; does not require the full workspace boot.
 - **`channel` / `all-with-channels` / `unread`** — resolved via `client.counts` / `userBoot` (`GetChannelCounts`, `GetChannelDirectory` in `internal/slack/channels.go`). Includes joined channel metadata.
-- Display names for DMs are resolved from the workspace user cache; MPDMs use member user IDs resolved to display names. Channels whose name is not in the cache are resolved via `conversations.info` (`ChannelInfo` in `internal/slack/channels.go`).
+- Display names for DMs are resolved from the workspace user cache. MPDM participant handles (embedded in the `mpdm-<h1>--<h2>-1` channel name) are resolved via `UserCache.GetUserByHandle`: in-memory `FindByName` first (free), then a `SearchUsers` edge-API call for unknown handles (result stored in-memory for the session). Falls back to the raw handle when resolution fails. Channels whose name is not in the cache are resolved via `conversations.info` (`ChannelInfo` in `internal/slack/channels.go`).
 - Results are sorted by `latest_ts` descending before formatting; entries with no timestamp sort to the bottom.

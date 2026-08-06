@@ -128,7 +128,7 @@ func chatsFetch(flags ChatsFlags) ([]chatEntry, slack.ConversationListResult, er
 
 	// Modes that include channels use client.counts (Enterprise Grid safe).
 	if t == "channel" || t == "all-with-channels" || t == "unread" {
-		return chatsFetchWithChannels(t, count, workspace, client, cache)
+		return chatsFetchWithChannels(t, count, workspace, client, cache, entry.EnterpriseID)
 	}
 
 	// DM/MPDM-only modes use the users.conversations / client.counts path.
@@ -156,13 +156,13 @@ func chatsFetch(flags ChatsFlags) ([]chatEntry, slack.ConversationListResult, er
 	// Resolve peer IDs and MPDM names for the trimmed set only.
 	resolveConversationMetadata(client, result.Conversations)
 
-	entries := buildChatEntries(result.Conversations, cache)
+	entries := buildChatEntries(result.Conversations, cache, entry.EnterpriseID)
 	return entries, result, nil
 }
 
 // chatsFetchWithChannels handles the channel-aware modes (channel,
 // all-with-channels, unread) by calling client.counts.
-func chatsFetchWithChannels(t string, count int, workspace string, client *slack.Client, cache *slack.UserCache) ([]chatEntry, slack.ConversationListResult, error) {
+func chatsFetchWithChannels(t string, count int, workspace string, client *slack.Client, cache *slack.UserCache, enterpriseID string) ([]chatEntry, slack.ConversationListResult, error) {
 	counts, err := client.GetChannelCounts(workspace)
 	if err != nil {
 		return nil, slack.ConversationListResult{}, fmt.Errorf("listing conversations: %w", err)
@@ -243,7 +243,7 @@ func chatsFetchWithChannels(t string, count int, workspace string, client *slack
 			e.Name = resolveUserDisplay(ch.User, cache)
 		case ch.IsMpIM:
 			e.Type = "mpdm"
-			e.Name = resolveMpdmName(ch.Name, nil, cache)
+			e.Name = resolveMpdmName(ch.Name, nil, cache, enterpriseID)
 		default:
 			e.Type = "channel"
 			e.Name = "#" + ch.Name
@@ -333,7 +333,7 @@ type chatEntry struct {
 
 // buildChatEntries converts a pre-sorted []slack.Conversation to []chatEntry.
 // The input slice must already be sorted — this function does not sort.
-func buildChatEntries(convs []slack.Conversation, cache *slack.UserCache) []chatEntry {
+func buildChatEntries(convs []slack.Conversation, cache *slack.UserCache, enterpriseID string) []chatEntry {
 	entries := make([]chatEntry, 0, len(convs))
 	for _, c := range convs {
 		e := chatEntry{
@@ -349,7 +349,7 @@ func buildChatEntries(convs []slack.Conversation, cache *slack.UserCache) []chat
 			e.Name = resolveUserDisplay(c.User, cache)
 		} else {
 			e.Type = "mpdm"
-			e.Name = resolveMpdmName(c.Name, c.Members, cache)
+			e.Name = resolveMpdmName(c.Name, c.Members, cache, enterpriseID)
 		}
 		if c.LatestTs != "" {
 			if f, err := strconv.ParseFloat(c.LatestTs, 64); err == nil {
@@ -379,7 +379,10 @@ func resolveUserDisplay(userID string, cache *slack.UserCache) string {
 }
 
 // resolveMpdmName builds a readable name from a raw MPDM name or member IDs.
-func resolveMpdmName(rawName string, members []string, cache *slack.UserCache) string {
+// Handles are resolved via the user cache (FindByName, free) with a SearchUsers
+// API fallback for unknown handles (result stored in-memory for the session).
+// Falls back to the raw handle when resolution fails.
+func resolveMpdmName(rawName string, members []string, cache *slack.UserCache, enterpriseID string) string {
 	if len(members) > 0 && cache != nil {
 		names := make([]string, 0, len(members))
 		for _, id := range members {
@@ -387,22 +390,48 @@ func resolveMpdmName(rawName string, members []string, cache *slack.UserCache) s
 		}
 		return strings.Join(names, ", ")
 	}
-	name := strings.TrimPrefix(rawName, "mpdm-")
-	// Strip trailing "-N" numeric suffix (e.g. "-1").
-	if idx := strings.LastIndex(name, "-"); idx > 0 {
-		suffix := name[idx+1:]
-		allDigits := true
-		for _, r := range suffix {
-			if r < '0' || r > '9' {
-				allDigits = false
-				break
-			}
-		}
-		if allDigits {
-			name = name[:idx]
+	handles := parseMpdmHandles(rawName)
+	if len(handles) == 0 {
+		return rawName
+	}
+	if cache == nil {
+		return strings.Join(handles, ", ")
+	}
+	names := make([]string, 0, len(handles))
+	for _, h := range handles {
+		if u, err := cache.GetUserByHandle(h, enterpriseID); err == nil && u.ShortLabel() != "" {
+			names = append(names, u.ShortLabel())
+		} else {
+			names = append(names, h)
 		}
 	}
-	return strings.Join(strings.Split(name, "--"), ", ")
+	return strings.Join(names, ", ")
+}
+
+// parseMpdmHandles extracts the participant handles from a raw Slack MPDM name.
+// Format: "mpdm-<handle1>--<handle2>--...-N" → ["handle1", "handle2", ...]
+// Returns nil when rawName is not an mpdm name.
+func parseMpdmHandles(rawName string) []string {
+	if !strings.HasPrefix(rawName, "mpdm-") {
+		return nil
+	}
+	s := strings.TrimPrefix(rawName, "mpdm-")
+	// Strip trailing "-N" numeric suffix.
+	if idx := strings.LastIndex(s, "-"); idx > 0 {
+		if suffix := s[idx+1:]; isAllDigits(suffix) {
+			s = s[:idx]
+		}
+	}
+	return strings.Split(s, "--")
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 // formatChatsJSON renders entries as NDJSON. One object per line; optional
