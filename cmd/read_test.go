@@ -966,3 +966,79 @@ func TestFetchThreadWithClient_channelCacheHit(t *testing.T) {
 		t.Errorf("expected 'cached ws msg', got %v", msgs)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// readCanvas
+// ---------------------------------------------------------------------------
+
+// stubCanvasClient implements canvasClient for testing.
+type stubCanvasClient struct {
+	canvas slack.Canvas
+	err    error
+}
+
+func (s *stubCanvasClient) GetCanvas(fileID string) (slack.Canvas, error) {
+	return s.canvas, s.err
+}
+
+func TestReadCanvas_htmlContent(t *testing.T) {
+	stub := &stubCanvasClient{
+		canvas: slack.Canvas{
+			FileID:  "F0BU80G8PB2",
+			Title:   "Q4 Planning",
+			Content: `<div class="quip-canvas-content"><h1 id="x">Q4 Planning</h1><p id="y">Hello world</p></div>`,
+		},
+	}
+	ref := slack.CanvasRef{Workspace: "myorg.slack.com", FileID: "F0BU80G8PB2"}
+	got, err := readCanvas(stub, ref)
+	if err != nil {
+		t.Fatalf("readCanvas: %v", err)
+	}
+	if !strings.Contains(got, "# Q4 Planning") {
+		t.Errorf("expected h1 as markdown heading, got: %q", got)
+	}
+	if !strings.Contains(got, "Hello world") {
+		t.Errorf("expected paragraph text, got: %q", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("output should end with newline, got: %q", got)
+	}
+}
+
+func TestReadCanvas_tablePreserved(t *testing.T) {
+	stub := &stubCanvasClient{
+		canvas: slack.Canvas{
+			FileID:  "F001",
+			Content: `<table><tr><td id="junk">Feature</td><td>Notes</td></tr></table>`,
+		},
+	}
+	ref := slack.CanvasRef{Workspace: "myorg.slack.com", FileID: "F001"}
+	got, err := readCanvas(stub, ref)
+	if err != nil {
+		t.Fatalf("readCanvas: %v", err)
+	}
+	// Table must remain as HTML, id attribute stripped.
+	if !strings.Contains(got, "<table>") {
+		t.Errorf("expected table HTML preserved, got: %q", got)
+	}
+	if strings.Contains(got, `id="junk"`) {
+		t.Errorf("quip id attribute should be stripped, got: %q", got)
+	}
+}
+
+func TestReadCanvas_clientError(t *testing.T) {
+	stub := &stubCanvasClient{err: errors.New("canvas not found")}
+	ref := slack.CanvasRef{Workspace: "myorg.slack.com", FileID: "F001"}
+	_, err := readCanvas(stub, ref)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestReadCanvas_invalidURL(t *testing.T) {
+	// ReadCanvas must reject non-canvas URLs before touching keychain.
+	_, err := ReadCanvas("https://myorg.slack.com/archives/C123/p1700000000000001", "")
+	if err == nil {
+		t.Fatal("expected error for non-canvas URL")
+	}
+}

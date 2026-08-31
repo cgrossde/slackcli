@@ -172,8 +172,43 @@ func (c *Client) GetFileInfo(fileID string) (File, error) {
 		Name:       f.Name,
 		Title:      f.Title,
 		PrettyType: f.PrettyType,
+		Filetype:   f.Filetype,
 		Mimetype:   f.Mimetype,
 		Permalink:  f.Permalink,
 		URLPrivate: f.URLPrivate,
+	}, nil
+}
+
+// Canvas holds the content and metadata of a Slack canvas.
+type Canvas struct {
+	FileID   string // Slack file ID, e.g. "F0BU80G8PB2"
+	Title    string // canvas title
+	Content  string // raw HTML export (Quip format)
+	Filetype string // "canvas" or similar
+}
+
+// GetCanvas fetches the content of a Slack canvas by file ID.
+// It calls files.info to retrieve the private download URL, then
+// downloads the canvas content (markdown) using the authenticated client.
+// Returns ErrNotACanvas when the file is not a canvas/doc type.
+func (c *Client) GetCanvas(fileID string) (Canvas, error) {
+	info, err := c.GetFileInfo(fileID)
+	if err != nil {
+		return Canvas{}, err
+	}
+	// Canvas files have filetype "canvas" or mode "quip".
+	// Require a private URL to download content.
+	if info.URLPrivate == "" {
+		return Canvas{}, fmt.Errorf("canvas %s: no private URL available (filetype: %s)", fileID, info.Filetype)
+	}
+	data, _, err := c.FetchFileBytes(info.URLPrivate)
+	if err != nil {
+		return Canvas{}, fmt.Errorf("canvas %s: download content: %w", fileID, err)
+	}
+	return Canvas{
+		FileID:   info.ID,
+		Title:    info.Title,
+		Content:  string(data),
+		Filetype: info.Filetype,
 	}, nil
 }

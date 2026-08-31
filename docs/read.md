@@ -1,10 +1,10 @@
 # read
 
-Fetch and print a Slack message or full thread, or download a file attachment.
+Fetch and print a Slack message or full thread, download a file attachment, or read a canvas (doc).
 
 ## Usage
 
-The `read` command accepts four forms of message reference:
+The `read` command accepts five forms of reference:
 
 ```
 slackcli read <permalink-url>
@@ -29,6 +29,13 @@ slackcli read <file-permalink-url>
 ```
 
 A Slack file permalink URL. Downloads the file to disk. Workspace is inferred from the URL.
+
+```
+slackcli read <canvas-url>
+```
+
+A Slack canvas (doc) URL. Fetches and prints the canvas content as Markdown+HTML.
+
 ## Flags
 
 - `-h, --help`: Show help for the read command
@@ -38,7 +45,7 @@ A Slack file permalink URL. Downloads the file to disk. Workspace is inferred fr
 - `-o, --output string`: Output path for file downloads. Default: absolute path in the current working directory (e.g. `/Users/alice/downloads/filename.png`).
 - `--thread-ts string`: Thread root timestamp. When set alongside a `<channelID>:<replyTs>` positional arg, fetches the thread rooted at `threadTs` without an extra API round-trip. Overrides any `threadTs` already embedded in a three-part ref.
 ## Arguments
-`<url|channelID:ts|channelID:threadTs:replyTs|file-permalink>` (required) accepts four forms:
+`<url|channelID:ts|channelID:threadTs:replyTs|file-permalink|canvas-url>` (required) accepts five forms:
 
 ### Permalink URL
 
@@ -89,6 +96,26 @@ https://myorg.slack.com/files/WH1K7QTFU/F0B3HRU6ZA7/image.png
 
 Downloads the file using authenticated `files.info` + `url_private`. Saved to `--output` path or the current working directory (absolute path) by default. Workspace is extracted from the URL; falls back to the default stored workspace for Slack Enterprise Grid orgs where the file URL domain differs from the login workspace domain.
 
+### Canvas URL
+
+A Slack canvas (doc) URL in either form:
+
+```
+https://myorg.slack.com/docs/T03EE7DCP/F0BU80G8PB2
+https://myorg.slack.com/files/T03EE7DCP/F0BU80G8PB2
+```
+
+The `/docs/<teamID>/<fileID>` form is the canonical canvas deep-link. The `/files/<teamID>/<fileID>` form (team ID starts with `T`, no filename segment) is the sharing-link variant. Both are detected automatically; `--output` is ignored.
+
+Canvas content is fetched via `files.info` → `url_private` download. Slack stores canvases internally using the Quip editor; the download is an HTML export of the Quip document. The HTML is converted to a readable mixed format:
+
+- Headings (`<h1>`/`<h2>`/`<h3>`) → Markdown (`#` / `##` / `###`)
+- Paragraphs, inline bold/italic/code/strikethrough → Markdown
+- Unordered and ordered lists → Markdown (`-` / `1.`)
+- Links (`<a>`) → Markdown (`[text](url)`)
+- Quip `<lnk>` elements (internal link format) → plain URL text
+- Tables → clean HTML with one `<tr>` per line; `<p>` wrappers inside cells stripped, `<br>` replaced with ` · `; quip `id`/`class`/`style` attributes removed; structural attributes (`colspan`, `rowspan`) preserved
+- Code blocks (`<pre>`) → fenced Markdown (` ``` `)
 ## Output
 
 Messages are printed as plain text. Each message in the thread has a 120-character separator line, followed by the message body, optional file and reaction lines, and a blank line.
@@ -245,9 +272,10 @@ On Enterprise Grid, a single xoxc/xoxd credential works across all member worksp
 
 ## Implementation
 
-- `cmd/read.go`: `ReadMessage`, `ReadMessagePretty`, `ReadMessageJSON`, `ReadFile` (command handlers); `downloadFile` performs the actual download via the `fileClient` interface
+- `cmd/read.go`: `ReadMessage`, `ReadMessagePretty`, `ReadMessageJSON`, `ReadFile`, `ReadCanvas` (command handlers); `readCanvas` calls `slack.CanvasHTMLToText`; `downloadFile` performs file download via the `fileClient` interface
 - `cmd/pretty.go`: `PrettyThread` — ANSI rendering, iTerm2 inline image protocol
 - `cmd/iterm2.go`: iTerm2 OSC 1337 image sequence, terminal size detection
 - `internal/slack/conversations.go`: `GetMessage`, `GetThread`, `Message.Files`, `Message.Reactions`, `Message.Attachments`
-- `internal/slack/client.go`: `FetchFileBytes`, `GetFileInfo`
-- `internal/slack/url.go`: `ParseMessageRef`, `ParseFileRef`, `IsFileURL`; `ParseChannelURL`, `IsChannelURL` (channel URL detection for redirect)
+- `internal/slack/client.go`: `FetchFileBytes`, `GetFileInfo`, `GetCanvas`
+- `internal/slack/canvashtml.go`: `CanvasHTMLToText` — HTML-to-Markdown+HTML converter for Quip canvas exports
+- `internal/slack/url.go`: `ParseMessageRef`, `ParseFileRef`, `IsFileURL`; `ParseCanvasRef`, `IsCanvasURL`; `ParseChannelURL`, `IsChannelURL` (channel URL detection for redirect)

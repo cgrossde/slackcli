@@ -347,3 +347,89 @@ func IsChannelURL(raw string) bool {
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	return len(parts) == 2 && parts[0] == "archives" && parts[1] != ""
 }
+
+// CanvasRef identifies a Slack canvas (doc) by workspace and file ID.
+// Parsed from a canvas URL: https://<workspace>/docs/<teamID>/<fileID>
+// or from the file URL form used for canvases without a filename:
+// https://<workspace>/files/<teamID>/<fileID>
+type CanvasRef struct {
+	Workspace string // e.g. "myorg.slack.com"
+	FileID    string // e.g. "F0BU80G8PB2"
+}
+
+// ParseCanvasRef parses a Slack canvas URL and returns a CanvasRef.
+//
+// Accepted forms:
+//
+//	https://myorg.slack.com/docs/<teamID>/<fileID>
+//	https://myorg.slack.com/files/<teamID>/<fileID>   (teamID starts with T)
+//
+// The teamID segment is ignored; only FileID is extracted.
+func ParseCanvasRef(raw string) (CanvasRef, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return CanvasRef{}, fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return CanvasRef{}, fmt.Errorf("invalid Slack canvas URL %q: scheme must be http(s)", raw)
+	}
+	if !strings.HasSuffix(u.Host, ".slack.com") {
+		return CanvasRef{}, fmt.Errorf("invalid Slack canvas URL %q: host %q does not end with .slack.com", raw, u.Host)
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	// /docs/<teamID>/<fileID> — 3 segments
+	// /files/<teamID>/<fileID> — 3 segments where teamID[0] == 'T'
+	if len(parts) != 3 {
+		return CanvasRef{}, fmt.Errorf("invalid Slack canvas URL %q: expected path /docs/<teamID>/<fileID> or /files/<teamID>/<fileID>", raw)
+	}
+	switch parts[0] {
+	case "docs":
+		// /docs/<teamID>/<fileID> — accept any teamID
+	case "files":
+		// /files/<teamID>/<fileID> — teamID must start with T to distinguish
+		// canvas share links from regular file permalinks (userID starts with W/U).
+		if !strings.HasPrefix(parts[1], "T") {
+			return CanvasRef{}, fmt.Errorf("invalid Slack canvas URL %q: /files/ path requires team ID (starting with T), got %q", raw, parts[1])
+		}
+	default:
+		return CanvasRef{}, fmt.Errorf("invalid Slack canvas URL %q: path must start with /docs/ or /files/", raw)
+	}
+	fileID := parts[2]
+	if fileID == "" || !strings.HasPrefix(fileID, "F") {
+		return CanvasRef{}, fmt.Errorf("invalid Slack canvas URL %q: missing or invalid file ID", raw)
+	}
+	return CanvasRef{
+		Workspace: u.Host,
+		FileID:    fileID,
+	}, nil
+}
+
+// IsCanvasURL reports whether raw looks like a Slack canvas (doc) URL.
+// It matches:
+//   - https://<workspace>/docs/<teamID>/<fileID>
+//   - https://<workspace>/files/<teamID>/<fileID>  where teamID starts with 'T'
+func IsCanvasURL(raw string) bool {
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if !strings.HasSuffix(u.Host, ".slack.com") {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 3 {
+		return false
+	}
+	if parts[0] == "docs" && parts[2] != "" && strings.HasPrefix(parts[2], "F") {
+		return true
+	}
+	// /files/<teamID>/<fileID> — teamID starts with T (not a user ID)
+	if parts[0] == "files" && strings.HasPrefix(parts[1], "T") &&
+		parts[2] != "" && strings.HasPrefix(parts[2], "F") {
+		return true
+	}
+	return false
+}

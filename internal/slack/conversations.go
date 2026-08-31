@@ -66,6 +66,7 @@ type File struct {
 	Name       string
 	Title      string
 	PrettyType string // human-readable type, e.g. "PNG"
+	Filetype   string // API filetype token, e.g. "canvas", "png"
 	Mimetype   string
 	Permalink  string
 	URLPrivate string
@@ -103,6 +104,7 @@ func fromSlackMsg(m slackgo.Message) Message {
 			Name:       f.Name,
 			Title:      f.Title,
 			PrettyType: f.PrettyType,
+			Filetype:   f.Filetype,
 			Mimetype:   f.Mimetype,
 			Permalink:  f.Permalink,
 			URLPrivate: f.URLPrivate,

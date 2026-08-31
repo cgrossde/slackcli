@@ -31,9 +31,9 @@ func NewReadCmd() *cobra.Command {
 	var output string
 	var threadTs string
 	readCmd := &cobra.Command{
-		Use:   "read <url | channelID:ts | channelID:threadTs:replyTs | file-url>",
-		Short: "Print a Slack message, thread, or download a file",
-		Long: `Fetch and print a Slack message or full thread, or download a file attachment.
+		Use:   "read <url | channelID:ts | channelID:threadTs:replyTs | file-url | canvas-url>",
+		Short: "Print a Slack message, thread, file, or canvas",
+		Long: `Fetch and print a Slack message or full thread, download a file, or read a canvas (doc).
 
 Accepted reference forms:
 
@@ -57,11 +57,24 @@ Accepted reference forms:
       https://myorg.slack.com/files/WUSER/FILEID/filename.ext
       Downloads the file. Saved to --output path or ./filename by default.
 
+  slackcli read <canvas-url>
+      https://myorg.slack.com/docs/TEAMID/FFILEID
+      https://myorg.slack.com/files/TEAMID/FFILEID
+      Prints the canvas (doc) content as markdown.
+      The title is printed as a top-level heading above the content.
+
 Credentials must already be saved (run: slackcli auth login).
 If the message is a thread root or a reply, the full thread is printed.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			ref := args[0]
+			if slack.IsCanvasURL(ref) {
+				out, err := ReadCanvas(ref, workspace)
+				if out != "" {
+					fmt.Fprint(c.OutOrStdout(), out)
+				}
+				return err
+			}
 			if slack.IsFileURL(ref) {
 				out, err := ReadFile(ref, workspace, output)
 				if out != "" {
@@ -813,6 +826,59 @@ func ReadFile(rawURL, workspace, outputPath string) (string, error) {
 	}
 	client := slack.NewClient(entry.Token, entry.Cookie)
 	return downloadFile(client, ref, outputPath)
+}
+
+// canvasClient is the subset of slack.Client used by readCanvas.
+// Separated so the canvas read logic is unit-testable without network/keychain.
+type canvasClient interface {
+	GetCanvas(fileID string) (slack.Canvas, error)
+}
+
+// ReadCanvas fetches and prints the content of a Slack canvas (doc).
+// rawURL must be a canvas URL: https://<workspace>/docs/<teamID>/<fileID>
+// or the /files/<teamID>/<fileID> form used for canvas sharing links.
+// workspace is used only as a fallback when the URL workspace has no saved
+// credentials (Enterprise Grid org-level domain behaviour).
+func ReadCanvas(rawURL, workspace string) (string, error) {
+	ref, err := slack.ParseCanvasRef(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid canvas URL: %w", err)
+	}
+
+	ws := ref.Workspace
+	entry, err := keychain.Load(ws)
+	if err != nil {
+		if !errors.Is(err, keychain.ErrNotFound) {
+			return "", fmt.Errorf("loading credentials for %q: %w", ws, err)
+		}
+		// Enterprise Grid: canvas URL domain is the org host; fall back to default.
+		if workspace != "" {
+			ws = CanonicalDomain(workspace)
+		} else {
+			ws, err = keychain.ResolveDefault()
+			if err != nil {
+				return "", fmt.Errorf("no credentials for %q and no default workspace (run: slackcli auth login): %w", ref.Workspace, err)
+			}
+		}
+		entry, err = keychain.Load(ws)
+		if err != nil {
+			return "", fmt.Errorf("no credentials for workspace %q (run: slackcli auth login --workspace %s): %w", ws, ws, err)
+		}
+	}
+	client := slack.NewClient(entry.Token, entry.Cookie)
+	return readCanvas(client, ref)
+}
+
+// readCanvas performs the actual canvas fetch. Separated from ReadCanvas for testability.
+// The raw HTML export (Quip format) is converted to Markdown+HTML via
+// slack.CanvasHTMLToText: headings/paragraphs/lists become Markdown,
+// tables are preserved as clean HTML.
+func readCanvas(client canvasClient, ref slack.CanvasRef) (string, error) {
+	canvas, err := client.GetCanvas(ref.FileID)
+	if err != nil {
+		return "", err
+	}
+	return slack.CanvasHTMLToText(canvas.Content), nil
 }
 
 // fileClient is the subset of slack.Client used by downloadFile.

@@ -393,3 +393,80 @@ func TestIsFileURL(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCanvasRef_valid(t *testing.T) {
+	cases := []struct {
+		input     string
+		workspace string
+		fileID    string
+	}{
+		{
+			"https://myorg.slack.com/docs/T03EE7DCP/F0BU80G8PB2",
+			"myorg.slack.com", "F0BU80G8PB2",
+		},
+		{
+			// /files/<teamID>/<fileID> form (teamID starts with T)
+			"https://sap.enterprise.slack.com/files/T03EE7DCP/F0BU80G8PB2",
+			"sap.enterprise.slack.com", "F0BU80G8PB2",
+		},
+		{
+			"https://myorg.slack.com/docs/T12345/FABCDEF123",
+			"myorg.slack.com", "FABCDEF123",
+		},
+	}
+	for _, tc := range cases {
+		ref, err := ParseCanvasRef(tc.input)
+		if err != nil {
+			t.Errorf("ParseCanvasRef(%q): unexpected error: %v", tc.input, err)
+			continue
+		}
+		if ref.Workspace != tc.workspace {
+			t.Errorf("ParseCanvasRef(%q).Workspace = %q, want %q", tc.input, ref.Workspace, tc.workspace)
+		}
+		if ref.FileID != tc.fileID {
+			t.Errorf("ParseCanvasRef(%q).FileID = %q, want %q", tc.input, ref.FileID, tc.fileID)
+		}
+	}
+}
+
+func TestParseCanvasRef_invalid(t *testing.T) {
+	cases := []struct {
+		input string
+	}{
+		{"not-a-url"},
+		{"https://google.com/docs/T123/F456"},               // not .slack.com
+		{"https://myorg.slack.com/archives/C123/p17000001"}, // message URL
+		{"https://myorg.slack.com/docs/T123"},               // only one segment under /docs/
+		{"https://myorg.slack.com/docs/T123/"},              // empty fileID
+		{"https://myorg.slack.com/docs/T123/C123"},          // fileID must start with F
+		{"https://myorg.slack.com/files/W123/F456"},         // /files/ with user ID (W) — not a canvas
+	}
+	for _, tc := range cases {
+		_, err := ParseCanvasRef(tc.input)
+		if err == nil {
+			t.Errorf("ParseCanvasRef(%q): expected error, got nil", tc.input)
+		}
+	}
+}
+
+func TestIsCanvasURL(t *testing.T) {
+	cases := []struct {
+		input string
+		want  bool
+	}{
+		{"https://myorg.slack.com/docs/T03EE7DCP/F0BU80G8PB2", true},
+		{"https://sap.enterprise.slack.com/files/T03EE7DCP/F0BU80G8PB2", true},
+		{"https://myorg.slack.com/files/WH1K7QTFU/F0B3HRU6ZA7/image.png", false}, // regular file with user ID
+		{"https://myorg.slack.com/files/WH1K7QTFU/F0B3HRU6ZA7", false},           // regular file, no filename
+		{"https://myorg.slack.com/archives/C123/p1700000000000001", false},
+		{"C012ABC:1718197925.001234", false},
+		{"not-a-url", false},
+		{"https://google.com/docs/T123/F456", false}, // not .slack.com
+	}
+	for _, tc := range cases {
+		got := IsCanvasURL(tc.input)
+		if got != tc.want {
+			t.Errorf("IsCanvasURL(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}
