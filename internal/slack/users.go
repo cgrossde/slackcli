@@ -6,6 +6,7 @@
 package slack
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,6 +38,7 @@ func (u CachedUser) Label() string {
 		return u.ID
 	}
 }
+
 // ShortLabel returns just the display name for compact contexts (mentions).
 // Falls back through Name then ID so callers always get a non-empty string.
 func (u CachedUser) ShortLabel() string {
@@ -120,6 +122,33 @@ func (uc *UserCache) FindByName(name string) (CachedUser, bool) {
 		}
 	}
 	return CachedUser{}, false
+}
+
+// GetUserByHandle resolves a Slack handle (e.g. "u100001") to a CachedUser.
+// It checks the in-memory cache first (via FindByName), then — if a non-empty
+// enterpriseID is provided — falls back to a SearchUsers API call.
+// On a successful API lookup the result is stored in memory for the lifetime
+// of the cache object (not flushed to disk).
+func (uc *UserCache) GetUserByHandle(handle, enterpriseID string) (CachedUser, error) {
+	if u, ok := uc.FindByName(handle); ok {
+		return u, nil
+	}
+	if uc.client == nil || enterpriseID == "" {
+		return CachedUser{}, fmt.Errorf("user handle %q not in cache", handle)
+	}
+	results, err := uc.client.SearchUsers(context.Background(), handle, enterpriseID)
+	if err != nil {
+		return CachedUser{}, fmt.Errorf("GetUserByHandle %q: %w", handle, err)
+	}
+	// Pick the result whose Name exactly matches the handle (case-insensitive).
+	lower := strings.ToLower(handle)
+	for _, u := range results {
+		if strings.ToLower(u.Name) == lower {
+			uc.users[u.ID] = u // in-memory only; survives for subsequent handles in same run
+			return u, nil
+		}
+	}
+	return CachedUser{}, fmt.Errorf("user handle %q not found", handle)
 }
 
 // Search returns all cached users whose Name, DisplayName, or Email contain
