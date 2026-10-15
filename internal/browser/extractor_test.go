@@ -2,8 +2,80 @@ package browser
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestFindChromiumBinaryOverride(t *testing.T) {
+	dir := t.TempDir()
+	browser := filepath.Join(dir, "microsoft-edge")
+	if err := os.WriteFile(browser, []byte("browser"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SLACKCLI_BROWSER", browser)
+	t.Setenv("CHROME_APP", "")
+
+	got, err := FindChromiumBinary()
+	if err != nil {
+		t.Fatalf("FindChromiumBinary() error = %v", err)
+	}
+	if got != browser {
+		t.Errorf("FindChromiumBinary() = %q, want %q", got, browser)
+	}
+}
+
+func TestFindChromiumBinaryLegacyOverride(t *testing.T) {
+	dir := t.TempDir()
+	browser := filepath.Join(dir, "chrome")
+	if err := os.WriteFile(browser, []byte("browser"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SLACKCLI_BROWSER", "")
+	t.Setenv("CHROME_APP", browser)
+
+	got, err := FindChromiumBinary()
+	if err != nil {
+		t.Fatalf("FindChromiumBinary() error = %v", err)
+	}
+	if got != browser {
+		t.Errorf("FindChromiumBinary() = %q, want %q", got, browser)
+	}
+}
+
+func TestChromiumCandidatesIncludeCommonBrowsers(t *testing.T) {
+	tests := []struct {
+		goos       string
+		wantValues []string
+	}{
+		{
+			goos:       "darwin",
+			wantValues: []string{"Microsoft Edge.app", "Google Chrome.app", "Chromium.app", "Brave Browser.app"},
+		},
+		{
+			goos:       "linux",
+			wantValues: []string{"microsoft-edge", "google-chrome", "chromium", "brave"},
+		},
+		{
+			goos:       "windows",
+			wantValues: []string{"msedge.exe", "chrome.exe", "chromium.exe", "brave.exe"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.goos, func(t *testing.T) {
+			candidates := strings.Join(chromiumCandidates(tt.goos), "\n")
+			for _, want := range tt.wantValues {
+				if !strings.Contains(candidates, want) {
+					t.Errorf("chromiumCandidates(%q) does not contain %q", tt.goos, want)
+				}
+			}
+		})
+	}
+}
 
 func TestTokenRE(t *testing.T) {
 	t.Parallel()

@@ -3,7 +3,7 @@
 // dependencies — CDP is spoken over a hand-rolled RFC 6455 WebSocket client.
 //
 // Flow:
-//  1. Find the system Chrome/Chromium/Brave binary.
+//  1. Find a Chromium-based browser binary.
 //  2. Launch it with --remote-debugging-port (reuse if already running).
 //  3. Find or open a tab navigated to the workspace URL.
 //  4. Poll Network.getCookies for the "d" cookie and Runtime.evaluate for the
@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,7 +61,7 @@ type Options struct {
 	Timeout time.Duration
 }
 
-// Extract opens a visible Chrome window, navigates to the given Slack workspace
+// Extract opens a visible Chromium-based browser window, navigates to the given Slack workspace
 // URL, waits for the user to authenticate, and returns the extracted credentials.
 func Extract(ctx context.Context, workspace string, opts Options) (Credentials, error) {
 	if opts.Timeout == 0 {
@@ -72,37 +73,37 @@ func Extract(ctx context.Context, workspace string, opts Options) (Credentials, 
 		return Credentials{}, fmt.Errorf("invalid workspace: %w", err)
 	}
 
-	binary, err := FindChromeBinary()
+	binary, err := FindChromiumBinary()
 	if err != nil {
 		return Credentials{}, err
 	}
 
-	profileDir, err := chromeProfileDir()
+	profileDir, err := chromiumProfileDir()
 	if err != nil {
-		return Credentials{}, fmt.Errorf("cannot determine Chrome profile directory: %w", err)
+		return Credentials{}, fmt.Errorf("cannot determine Chromium browser profile directory: %w", err)
 	}
 
-	var chromCmd *exec.Cmd
+	var browserCmd *exec.Cmd
 	if !cdpReachable(cdpPort) {
-		chromCmd, err = launchChrome(binary, profileDir, workspaceURL, cdpPort)
+		browserCmd, err = launchChromium(binary, profileDir, workspaceURL, cdpPort)
 		if err != nil {
-			return Credentials{}, fmt.Errorf("failed to launch Chrome: %w", err)
+			return Credentials{}, fmt.Errorf("failed to launch Chromium browser: %w", err)
 		}
 	} else {
-		slog.Debug("chrome already running, reusing", "port", cdpPort)
+		slog.Debug("Chromium browser already running, reusing", "port", cdpPort)
 	}
 
 	if werr := waitForCDP(ctx, cdpPort, cdpStartupTimeout); werr != nil {
-		if chromCmd != nil {
-			chromCmd.Process.Kill() //nolint:errcheck
+		if browserCmd != nil {
+			browserCmd.Process.Kill() //nolint:errcheck
 		}
-		return Credentials{}, fmt.Errorf("Chrome CDP not available: %w", werr)
+		return Credentials{}, fmt.Errorf("Chromium browser CDP not available: %w", werr)
 	}
 
 	targetID, wsURL, nerr := cdpFindOrOpenPage(cdpPort, workspaceURL)
 	if nerr != nil {
-		if chromCmd != nil {
-			chromCmd.Process.Kill() //nolint:errcheck
+		if browserCmd != nil {
+			browserCmd.Process.Kill() //nolint:errcheck
 		}
 		return Credentials{}, nerr
 	}
@@ -110,8 +111,8 @@ func Extract(ctx context.Context, workspace string, opts Options) (Credentials, 
 	creds, cerr := cdpExtractCredentials(ctx, wsURL, workspaceURL, opts.Timeout)
 
 	cdpCloseTab(cdpPort, targetID)
-	if chromCmd != nil {
-		chromCmd.Process.Kill() //nolint:errcheck
+	if browserCmd != nil {
+		browserCmd.Process.Kill() //nolint:errcheck
 	}
 
 	return creds, cerr
@@ -122,7 +123,7 @@ func Extract(ctx context.Context, workspace string, opts Options) (Credentials, 
 func cdpExtractCredentials(ctx context.Context, wsURL, workspaceURL string, timeout time.Duration) (Credentials, error) {
 	conn, err := cdpConnect(wsURL)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("cannot connect to Chrome DevTools: %w", err)
+		return Credentials{}, fmt.Errorf("cannot connect to Chromium DevTools: %w", err)
 	}
 	defer conn.Close()
 
@@ -165,7 +166,7 @@ func cdpExtractCredentials(ctx context.Context, wsURL, workspaceURL string, time
 			"urls": []string{"https://slack.com", workspaceURL},
 		})
 		if cerr != nil {
-			return Credentials{}, fmt.Errorf("Chrome connection lost (browser was closed?): %w", cerr)
+			return Credentials{}, fmt.Errorf("Chromium browser connection lost (browser was closed?): %w", cerr)
 		}
 		xoxd := parseDCookie(cookieRaw)
 
@@ -245,38 +246,155 @@ func parseDCookie(result json.RawMessage) string {
 	return ""
 }
 
-// ── Chrome launching ─────────────────────────────────────────────────────────
+// ── Chromium browser launching ────────────────────────────────────────────────
 
-// FindChromeBinary returns the path to the first Chrome/Chromium/Brave binary
-// found on the system. CHROME_APP env var overrides the search.
-func FindChromeBinary() (string, error) {
+// FindChromiumBinary returns the path to the first Chromium-based browser
+// binary found on the system. SLACKCLI_BROWSER overrides the search;
+// CHROME_APP is retained as a backwards-compatible alias.
+func FindChromiumBinary() (string, error) {
+	if override := os.Getenv("SLACKCLI_BROWSER"); override != "" {
+		binary, err := resolveBrowserExecutable(override)
+		if err != nil {
+			return "", fmt.Errorf("SLACKCLI_BROWSER=%q not found", override)
+		}
+		return binary, nil
+	}
 	if override := os.Getenv("CHROME_APP"); override != "" {
-		if _, err := os.Stat(override); err == nil {
-			return override, nil
+		binary, err := resolveBrowserExecutable(override)
+		if err != nil {
+			return "", fmt.Errorf("CHROME_APP=%q not found", override)
 		}
-		return "", fmt.Errorf("CHROME_APP=%q not found", override)
+		return binary, nil
 	}
-	candidates := []string{
-		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-		"/Applications/Chromium.app/Contents/MacOS/Chromium",
-		"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-		"/usr/bin/chromium-browser",
-		"/usr/bin/chromium",
-		"/usr/bin/google-chrome",
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
+
+	for _, candidate := range chromiumCandidates(runtime.GOOS) {
+		if binary, ok := existingExecutable(candidate); ok {
+			return binary, nil
 		}
 	}
-	return "", fmt.Errorf("no Chrome/Chromium/Brave binary found; set CHROME_APP to override")
+	return "", fmt.Errorf("no Chromium-based browser found; set SLACKCLI_BROWSER or CHROME_APP to override")
 }
 
-// chromeProfileDir returns (and creates) the Chrome profile directory.
-// SLACKCLI_CHROME_PROFILE env var overrides the default (~/.config/slackcli/chrome-profile).
-func chromeProfileDir() (string, error) {
-	if override := os.Getenv("SLACKCLI_CHROME_PROFILE"); override != "" {
-		return override, nil
+// FindChromeBinary is kept for callers that used the old exported name.
+// Deprecated: use FindChromiumBinary.
+func FindChromeBinary() (string, error) {
+	return FindChromiumBinary()
+}
+
+// chromiumCandidates returns known Chromium-based browser locations and
+// executable names in preference order. Executable-name entries are resolved
+// through PATH, which also supports package-manager installations.
+func chromiumCandidates(goos string) []string {
+	switch goos {
+	case "darwin":
+		return []string{
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+			"/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+			"/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
+			"/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
+			"/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary",
+			"/Applications/Chromium.app/Contents/MacOS/Chromium",
+			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+			"/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
+			"/Applications/Opera.app/Contents/MacOS/Opera",
+			"/Applications/Arc.app/Contents/MacOS/Arc",
+			"google-chrome",
+			"google-chrome-stable",
+			"microsoft-edge",
+			"microsoft-edge-stable",
+			"chromium",
+			"brave",
+			"brave-browser",
+			"vivaldi",
+			"opera",
+		}
+	case "windows":
+		return appendWindowsChromiumCandidates(nil)
+	default:
+		return []string{
+			"/usr/bin/google-chrome-stable",
+			"/usr/bin/google-chrome",
+			"/usr/bin/microsoft-edge-stable",
+			"/usr/bin/microsoft-edge",
+			"/usr/bin/chromium",
+			"/usr/bin/chromium-browser",
+			"/usr/bin/ungoogled-chromium",
+			"/usr/bin/brave-browser",
+			"/usr/bin/brave",
+			"/usr/bin/vivaldi",
+			"/usr/bin/opera",
+			"google-chrome-stable",
+			"google-chrome",
+			"microsoft-edge-stable",
+			"microsoft-edge",
+			"chromium",
+			"chromium-browser",
+			"ungoogled-chromium",
+			"brave-browser",
+			"brave",
+			"vivaldi",
+			"opera",
+		}
+	}
+}
+
+func appendWindowsChromiumCandidates(candidates []string) []string {
+	programFiles := os.Getenv("PROGRAMFILES")
+	programFilesX86 := os.Getenv("PROGRAMFILES(X86)")
+	localAppData := os.Getenv("LOCALAPPDATA")
+	for _, root := range []string{programFiles, programFilesX86, localAppData} {
+		if root == "" {
+			continue
+		}
+		candidates = append(candidates,
+			filepath.Join(root, "Google", "Chrome", "Application", "chrome.exe"),
+			filepath.Join(root, "Microsoft", "Edge", "Application", "msedge.exe"),
+			filepath.Join(root, "Chromium", "Application", "chrome.exe"),
+			filepath.Join(root, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+			filepath.Join(root, "Vivaldi", "Application", "vivaldi.exe"),
+			filepath.Join(root, "Programs", "Opera", "launcher.exe"),
+		)
+	}
+	return append(candidates,
+		"chrome.exe",
+		"msedge.exe",
+		"chromium.exe",
+		"brave.exe",
+		"vivaldi.exe",
+		"opera.exe",
+	)
+}
+
+func resolveBrowserExecutable(value string) (string, error) {
+	if binary, err := exec.LookPath(value); err == nil {
+		return binary, nil
+	}
+	info, err := os.Stat(value)
+	if err != nil || info.IsDir() {
+		return "", fmt.Errorf("browser executable does not exist")
+	}
+	return value, nil
+}
+
+func existingExecutable(candidate string) (string, bool) {
+	if strings.ContainsAny(candidate, `/\`) {
+		info, err := os.Stat(candidate)
+		return candidate, err == nil && !info.IsDir()
+	}
+	binary, err := exec.LookPath(candidate)
+	return binary, err == nil
+}
+
+// chromiumProfileDir returns (and creates) the Chromium browser profile
+// directory. SLACKCLI_BROWSER_PROFILE is preferred; the old
+// SLACKCLI_CHROME_PROFILE name remains supported.
+func chromiumProfileDir() (string, error) {
+	for _, name := range []string{"SLACKCLI_BROWSER_PROFILE", "SLACKCLI_CHROME_PROFILE"} {
+		if override := os.Getenv(name); override != "" {
+			return override, nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -284,12 +402,18 @@ func chromeProfileDir() (string, error) {
 	}
 	dir := filepath.Join(home, ".config", "slackcli", "chrome-profile")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("cannot create Chrome profile dir %s: %w", dir, err)
+		return "", fmt.Errorf("cannot create Chromium browser profile dir %s: %w", dir, err)
 	}
 	return dir, nil
 }
 
-func launchChrome(binary, profileDir, targetURL string, port int) (*exec.Cmd, error) {
+// chromeProfileDir is kept for package-local callers using the old helper.
+// Deprecated: use chromiumProfileDir.
+func chromeProfileDir() (string, error) {
+	return chromiumProfileDir()
+}
+
+func launchChromium(binary, profileDir, targetURL string, port int) (*exec.Cmd, error) {
 	cmd := exec.Command(binary,
 		fmt.Sprintf("--remote-debugging-port=%d", port),
 		"--user-data-dir="+profileDir,
@@ -305,6 +429,12 @@ func launchChrome(binary, profileDir, targetURL string, port int) (*exec.Cmd, er
 		return nil, err
 	}
 	return cmd, nil
+}
+
+// launchChrome is kept for package-local callers using the old helper.
+// Deprecated: use launchChromium.
+func launchChrome(binary, profileDir, targetURL string, port int) (*exec.Cmd, error) {
+	return launchChromium(binary, profileDir, targetURL, port)
 }
 
 func cdpReachable(port int) bool {
@@ -334,7 +464,7 @@ func waitForCDP(ctx context.Context, port int, timeout time.Duration) error {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	return fmt.Errorf("timed out waiting for Chrome on port %d (waited %s)", port, timeout)
+	return fmt.Errorf("timed out waiting for Chromium browser on port %d (waited %s)", port, timeout)
 }
 
 // ── CDP page targeting ────────────────────────────────────────────────────────
@@ -391,7 +521,7 @@ func cdpFindOrOpenPage(port int, workspaceURL string) (targetID, wsURL string, e
 	// Open a new tab.
 	newResp, nerr := http.Get(fmt.Sprintf("http://127.0.0.1:%d/json/new?%s", port, url.QueryEscape(workspaceURL))) //nolint:noctx
 	if nerr != nil {
-		return "", "", fmt.Errorf("could not open new Chrome tab: %w", nerr)
+		return "", "", fmt.Errorf("could not open new Chromium browser tab: %w", nerr)
 	}
 	defer newResp.Body.Close()
 	newBody, _ := io.ReadAll(newResp.Body)

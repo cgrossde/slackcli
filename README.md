@@ -10,7 +10,7 @@ A Unix CLI tool that gives an AI agent programmatic access to Slack — reading 
 
 - macOS (Keychain storage)
 - Go 1.21+
-- Chromium or Firefox (for `auth login`)
+- A Chromium-based browser such as Chrome, Edge, Chromium, Brave, Vivaldi, or Opera (for `auth login`)
 
 ## Install
 

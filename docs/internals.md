@@ -8,7 +8,7 @@ Slack revokes sessions that do not present a browser-like TLS fingerprint. The `
 
 A `transport.FuncTransport` wrapper injects browser headers on every request: `sec-ch-ua`, `sec-fetch-dest`, `sec-fetch-mode`, `sec-fetch-site`, and `Origin`.
 
-The `chromeUA` constant is pinned to `Chrome/143.0.7499.4`. When updating the browser binary, update this constant to match. This ensures the User-Agent is consistent between the login browser session and API calls.
+The `chromeUA` constant is pinned to `Chrome/143.0.7499.4`. It is intentionally a stable Chrome-compatible API fingerprint and is independent of whether login used Chrome, Edge, or another Chromium-based browser; update it only when changing the fingerprint strategy.
 
 Cookie injection seeds a `cookiejar` with `d=<xoxd>` for `.slack.com`. If uTLS initialisation fails, a plain `cookieTransport` fallback is used.
 
@@ -109,18 +109,19 @@ To permit writing to a new channel, add its ID to `internal/slack/allowlist.txt`
 
 ## Browser credential extraction (CDP)
 
-`internal/browser/extractor.go` implements credential extraction via the Chrome DevTools Protocol (CDP) with no third-party browser automation library.
+`internal/browser/extractor.go` implements credential extraction via the Chrome DevTools Protocol (CDP) with no third-party browser automation library. CDP is supported by Chromium-based browsers such as Chrome, Edge, Chromium, Brave, Vivaldi, and Opera.
 
 Flow:
-1. `FindChromeBinary()` searches for Chrome/Chromium/Brave at well-known macOS paths. `CHROME_APP` env var overrides.
-2. `chromeProfileDir()` returns `~/.config/slackcli/chrome-profile` (overridden by `SLACKCLI_CHROME_PROFILE`).
-3. If CDP port 9235 is not reachable, `launchChrome()` spawns the binary with `--remote-debugging-port=9235`.
-4. `cdpFindOrOpenPage()` navigates a tab to the workspace URL.
-5. `cdpExtractCredentials()` polls every 2s via `cdpConnect` (a hand-rolled RFC 6455 WebSocket client):
+1. `FindChromiumBinary()` searches for Chromium-based browsers at well-known application paths and on `PATH`. `SLACKCLI_BROWSER` overrides the search; `CHROME_APP` remains supported for compatibility.
+2. `chromiumProfileDir()` returns `~/.config/slackcli/chrome-profile` (overridden by `SLACKCLI_BROWSER_PROFILE`; `SLACKCLI_CHROME_PROFILE` remains supported).
+3. If CDP port 9235 is already reachable, the CLI reuses that endpoint without checking whether it belongs to the executable selected by `SLACKCLI_BROWSER`. To force the selected browser, stop the existing CDP listener before login.
+4. If CDP port 9235 is not reachable, `launchChromium()` spawns the selected binary with `--remote-debugging-port=9235`.
+5. `cdpFindOrOpenPage()` navigates a tab to the workspace URL.
+6. `cdpExtractCredentials()` polls every 2s via `cdpConnect` (a hand-rolled RFC 6455 WebSocket client):
    - `Runtime.evaluate` reads the xoxc token from `localStorage.localConfig_v2`.
    - `Network.getCookies` reads the `"d"` session cookie.
    Both must be present before the function returns.
-6. The tab is closed and Chrome is killed (if we launched it).
+7. The tab is closed and the Chromium browser is killed (if we launched it).
 
 `chromeUA` in `client.go` must match the Chrome major version in use.
 ## Markdown → mrkdwn conversion
