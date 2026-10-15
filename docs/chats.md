@@ -42,7 +42,7 @@ Each conversation is printed on one line with its Slack ID, type, display name, 
 
 ```
 D09SD70E1HU  dm      @Alice Johnson                            2026-06-12 09:00  [2 mention(s)]
-G0B3PCPL0CF  mpdm    alice, bob, carol                         2026-06-11 18:30
+G0B3PCPL0CF  mpdm    Alice Example, Bob Example, Carol Example       2026-06-11 18:30
 D012BOTCHAN  dm      @Bot Name                                 2026-06-10 14:00  [unread]
 C0B3PCPL0CF  channel #general                                  2026-06-09 17:15  *
 
@@ -70,7 +70,7 @@ Emits one JSON object per conversation:
 
 ```json
 {"id":"D09SD70E1HU","type":"dm","name":"@Alice Johnson","peer_id":"U09SD70PEER","latest_ts":"1749722400.001234","has_unreads":true,"mention_count":2}
-{"id":"G0B3PCPL0CF","type":"mpdm","name":"alice, bob, carol","raw_name":"mpdm-alice--bob--carol-1","member_ids":["U09SD70E1HU","U09BOBXXXX","U09CAROLXX"],"latest_ts":"1749657000.005678"}
+{"id":"G0B3PCPL0CF","type":"mpdm","name":"Alice Example, Bob Example, Carol Example","raw_name":"mpdm-alice--bob--carol-1","member_ids":["U09SD70E1HU","U09BOBXXXX","U09CAROLXX"],"latest_ts":"1749657000.005678"}
 {"id":"D012BOTCHAN","type":"dm","name":"@Bot Name","peer_id":"U012BOTUSER","latest_ts":"1749564000.009012","has_unreads":true}
 ```
 
@@ -80,8 +80,8 @@ Emits one JSON object per conversation:
 |---|---|---|
 | `id` | string | Slack channel/conversation ID |
 | `type` | string | `dm`, `mpdm`, or `channel` |
-| `name` | string | Display name (e.g. `@Alice`, `alice, bob, carol`, `#general`) |
-| `raw_name` | string | Raw internal name; omitted when empty |
+| `name` | string | Presentation name. For MPDMs, contains resolved participant names when available and raw handles when resolution fails; use `id` as the conversation key. |
+| `raw_name` | string | Original Slack internal name; omitted when empty. |
 | `peer_id` | string | For DMs: the peer user ID; omitted for others |
 | `member_ids` | []string | For MPDMs: participant user IDs; omitted when empty |
 | `latest_ts` | string | Timestamp of most recent message; omitted when empty |
