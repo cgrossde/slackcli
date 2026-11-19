@@ -29,12 +29,11 @@ archives:
     files:
       - completions/*
 
-# Signing is mandatory: `enabled` defaults to false, so it is set explicitly.
-# Missing secrets render empty values and fail the release instead of
-# publishing unsigned binaries.
 notarize:
   macos:
-    - enabled: true
+    # Mandatory for releases: missing or empty secrets fail the build.
+    # Local snapshot builds (goreleaser build --snapshot) skip signing.
+    - enabled: '{{ not .IsSnapshot }}'
       sign:
         certificate: "{{.Env.MACOS_SIGN_P12}}"
         password: "{{.Env.MACOS_SIGN_PASSWORD}}"
