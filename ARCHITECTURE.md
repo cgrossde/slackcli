@@ -107,7 +107,26 @@ internal/browser/   ← CDP-based credential extraction (auth subcommand)
 internal/slack/     ← HTTP client with xoxc + xoxd injection
 ```
 
-The `auth login` subcommand runs a visible browser, intercepts the xoxc token from API network traffic and localStorage, reads the xoxd cookie from browser storage state, and saves credentials to the macOS Keychain (one generic-password item per workspace).
+The `auth login` subcommand runs a visible browser, intercepts the xoxc token from API network traffic and localStorage, reads the xoxd cookie from browser storage state, and saves credentials to the macOS Keychain (one generic-password item per workspace, plus `__index__` and `__default__`).
+
+### Who can read the items
+
+`internal/keychain` picks one store per process (`secrets()` in `store.go`):
+
+| Build | Store | Service | Access list |
+|---|---|---|---|
+| Release: valid signature satisfying `identifier "slackcli"` + Developer ID Application, the team ID injected at build time via `-X …/internal/keychain.teamID` (checked at runtime with `SecCodeCheckValidity` on itself) | Security.framework via cgo (`framework_darwin.go`) | `slackcli.bound` | Trusts the slackcli designated requirement only: every signed slackcli version reads silently; any other program, including `/usr/bin/security`, gets the macOS password prompt |
+| Dev (`go build`, ad-hoc or unsigned), `CGO_ENABLED=0`, and `go test` binaries | `/usr/bin/security` CLI (`store_cli.go`) | `slackcli` (legacy) | Trusts `security`, so any process running as the user can read it silently |
+
+Dev builds stay on the CLI because an ad-hoc signature changes with every build, so a bound item would prompt after each rebuild. The release check is a runtime signature check, not a build flag, so it holds only for binaries that can actually keep the binding.
+
+**Migration** (`migratingStore`, release only): reads go to `slackcli.bound`. On a miss, the account is read from the legacy service through `security` (silent, it created the item), written as a bound item, and the legacy item is deleted. Writes go to the bound service and delete any legacy copy (e.g. one recreated by a downgraded version). Deletes remove both.
+
+`security -w` prints secrets containing non-ASCII bytes as hex; `cliStore.get` decodes that form.
+
+Listing (`keychain.List`) reads the `__index__` item and loads each workspace through the same store, so bound items are listed without any keychain dump.
+
+Manual signing experiments: `go build -tags keychainselftest -o <dir>/slackcli ./internal/keychain/selftest`, sign it, then `<dir>/slackcli mode|put|get|bound-get|del`. The self-test only touches the throwaway services `slackcli-selftest` and `slackcli-selftest.bound` and is never compiled into release builds.
 
 All subsequent commands load credentials from the Keychain and inject them as:
 - `Authorization: Bearer xoxc-...` header
@@ -182,7 +201,12 @@ slackcli/
 │   │   └── snippet_test.go
 │   ├── keychain/
 │   │   ├── keychain.go          macOS Keychain: save/load/delete/list credentials
-│   │   └── default.go           SetDefault, GetDefault, ResolveDefault
+│   │   ├── default.go           SetDefault, GetDefault, ResolveDefault
+│   │   ├── store.go             secretStore seam, release detection, migratingStore (legacy → binary-bound)
+│   │   ├── store_cli.go         cliStore: /usr/bin/security (dev builds, migration source)
+│   │   ├── framework_darwin.go  frameworkStore + selfSatisfies via Security.framework (cgo)
+│   │   ├── framework_other.go   stub when cgo or darwin is absent
+│   │   └── selftest.go, selftest/  manual signing experiment (build tag keychainselftest only)
 │   └── output/
 │       └── presenter.go         Layer 2: overflow, footer, stderr attachment
 └── ARCHITECTURE.md

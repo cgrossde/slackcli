@@ -25,7 +25,7 @@ Process:
 - Opens a browser window at the workspace URL pointing to the login page. Log in normally; the CLI detects completion automatically.
 - Extracts the xoxc token via CDP: `Runtime.evaluate` polls `localConfig_v2` in localStorage.
 - Extracts the xoxd cookie via CDP: `Network.getCookies` reads the `d` cookie.
-- Saves both token and cookie to the macOS Keychain as a single generic-password item keyed by workspace domain.
+- Saves both token and cookie to the macOS Keychain as a single generic-password item keyed by workspace domain: service `slackcli.bound` for signed release builds (readable only by slackcli; other programs get a password prompt), service `slackcli` for development builds. Release builds move existing `slackcli` items on first use. See ARCHITECTURE.md → Authentication Flow.
 - Also calls `client.TeamID(ctx, workspace)` (via `client.userBoot`) and saves the per-workspace team ID (`team_id` field) to the Keychain entry.
 - Timeout: 5 minutes. After 5 minutes, the operation aborts with an error.
 - Ctrl+C cancels the login gracefully. Press Ctrl+C a second time to force-kill the browser after 3 seconds.
@@ -171,7 +171,7 @@ The auth command is implemented across several files:
 - `main.go` defines `makeLoginRunE` which injects Chromium CDP browser logic and signal handling for login and reauth. After a successful save it calls `AuthTest` + `GridWorkspaces` to populate `EnterpriseID` and `GridWorkspaces` on the keychain entry (best-effort).
 - `internal/browser/extractor.go` manages CDP session lifecycle and credential extraction from the browser environment (`Runtime.evaluate` for the xoxc token, `Network.getCookies` for the xoxd cookie). The `SLACKCLI_BROWSER`/`CHROME_APP` and `SLACKCLI_BROWSER_PROFILE`/`SLACKCLI_CHROME_PROFILE` env vars are read here.
 - `internal/keychain/keychain.go` provides Keychain read, write, delete, and list operations. `Entry` carries: `token` (xoxc), `cookie` (xoxd), `team_id` (per-workspace team ID, e.g. `T03EE7DCP`, populated at login and lazily by `slackcli open`), and two optional Enterprise Grid fields: `enterprise_id` and `grid_workspaces` (slice of sibling workspace domains).
-- `internal/keychain/default.go` provides default workspace management: `SetDefault`, `GetDefault`, `DeleteDefault`, `ResolveDefault`. The default is stored as a Keychain item with service=`slackcli`, account=`__default__`, and value=workspace domain string. `DeleteDefault()` is a no-op when no default is stored.
+- `internal/keychain/default.go` provides default workspace management: `SetDefault`, `GetDefault`, `DeleteDefault`, `ResolveDefault`. The default is stored as a Keychain item with service=`slackcli.bound` (signed release) or `slackcli` (dev builds), account=`__default__`, and value=workspace domain string. `DeleteDefault()` is a no-op when no default is stored.
 - `internal/slack/grid.go` implements `(*Client).GridWorkspaces(ctx, workspace)` which calls `client.userBoot` and returns `[]GridWorkspace{ID, Domain}`.
 
 Workspace names and URLs are normalised to bare domains via the `CanonicalDomain` function.

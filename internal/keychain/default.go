@@ -2,7 +2,7 @@
 //
 // The default is stored as a separate generic-password item:
 //
-//	service  = "slackcli"
+//	service  = "slackcli.bound" (signed release) or "slackcli" (dev builds, legacy)
 //	account  = "__default__"
 //	password = workspace domain (e.g. "myorg.slack.com")
 //
@@ -25,29 +25,17 @@ func SetDefault(workspace string) error {
 	if workspace == "" {
 		return errors.New("keychain.SetDefault: workspace must not be empty")
 	}
-	out, err := run("security", "add-generic-password",
-		"-s", serviceName,
-		"-a", defaultAccount,
-		"-w", workspace,
-		"-U",
-	)
-	if err != nil {
-		return fmt.Errorf("keychain.SetDefault: %w: %s", err, out)
+	if err := secrets().set(defaultAccount, workspace); err != nil {
+		return fmt.Errorf("keychain.SetDefault: %w", err)
 	}
 	return nil
 }
 
 // DeleteDefault removes the stored default workspace. No-op if none is set.
 func DeleteDefault() error {
-	out, err := run("security", "delete-generic-password",
-		"-s", serviceName,
-		"-a", defaultAccount,
-	)
-	if err != nil {
-		if isNotFound(out) {
-			return nil
-		}
-		return fmt.Errorf("keychain.DeleteDefault: %w: %s", err, out)
+	err := secrets().del(defaultAccount)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("keychain.DeleteDefault: %w", err)
 	}
 	return nil
 }
@@ -55,16 +43,12 @@ func DeleteDefault() error {
 // GetDefault returns the stored default workspace domain.
 // Returns ErrNotFound if no default has been set.
 func GetDefault() (string, error) {
-	out, err := run("security", "find-generic-password",
-		"-s", serviceName,
-		"-a", defaultAccount,
-		"-w",
-	)
+	out, err := secrets().get(defaultAccount)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrNotFound
+	}
 	if err != nil {
-		if isNotFound(out) {
-			return "", ErrNotFound
-		}
-		return "", fmt.Errorf("keychain.GetDefault: %w: %s", err, out)
+		return "", fmt.Errorf("keychain.GetDefault: %w", err)
 	}
 	return strings.TrimSpace(out), nil
 }

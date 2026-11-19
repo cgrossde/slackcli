@@ -40,7 +40,7 @@ Never call `os.Exit` inside a `RunE` implementation. Doing so makes the code pat
 
 ## Keychain storage
 
-Workspace credentials are stored in the macOS Keychain via `internal/keychain/keychain.go`. One generic-password item is maintained per workspace.
+Workspace credentials are stored in the macOS Keychain via `internal/keychain/keychain.go`. One generic-password item is maintained per workspace: service `slackcli.bound` for signed release builds (item readable only by slackcli; other programs get a password prompt), service `slackcli` for development builds. Release builds move existing `slackcli` items to `slackcli.bound` on first use. See ARCHITECTURE.md → Authentication Flow → Who can read the items.
 
 The value is a JSON-encoded `Entry` struct containing `Workspace`, `Token`, `Cookie`, `SavedAt`, and `team_id` (omitempty) fields. `team_id` stores the per-workspace team ID (T…); it is populated at login and lazily by `slackcli open` via `client.userBoot`. It is used by the `slack://` deep-link scheme.
 
@@ -50,7 +50,7 @@ Missing entries are signalled by the `ErrNotFound` sentinel. Callers use `errors
 ### Default workspace item
 
 A second item tracks the default workspace:
-  service  = "slackcli"
+  service  = "slackcli.bound" (release) or "slackcli" (dev builds)
   account  = "__default__"
   password = workspace domain string (plain text, not JSON)
 

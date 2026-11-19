@@ -10,7 +10,10 @@ builds:
   - main: .
     binary: slackcli
     env:
-      - CGO_ENABLED=0
+      # cgo links Security.framework so release binaries own their keychain
+      # items (internal/keychain/framework_darwin.go). Both archs build with
+      # the macOS runner's clang; goarch selects the -arch flag.
+      - CGO_ENABLED=1
     goos:
       - darwin
     goarch:
@@ -22,6 +25,8 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/cgrossde/slackcli/cmd.version={{.Version}}
+      # Team that signs releases; enables binary-bound keychain items. Empty in snapshots.
+      - -X github.com/cgrossde/slackcli/internal/keychain.teamID={{ envOrDefault "MACOS_TEAM_ID" "" }}
 
 archives:
   - formats: [tar.gz]

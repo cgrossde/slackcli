@@ -1,17 +1,20 @@
 // Package keychain stores and retrieves slackcli credentials in the macOS
 // system Keychain. Each workspace gets one generic-password item:
 //
-//	service  = "slackcli"
+//	service  = "slackcli.bound" (signed release) or "slackcli" (dev builds, legacy)
 //	account  = workspace domain (e.g. "myorg.slack.com")
 //	password = JSON-encoded Entry
 //
 // A second item tracks the set of known workspaces:
 //
-//	service  = "slackcli"
+//	service  = same as above
 //	account  = "__index__"
 //	password = JSON-encoded []string of workspace domains
 //
-// The macOS `security` CLI is used directly — no external Go dependencies.
+// Where the items live is decided once per process by secrets() in store.go:
+// signed release builds keep them under a service bound to the slackcli
+// binary's code identity (migrating legacy items on first read); development
+// builds and tests use the `security` CLI under the legacy service.
 // dump-keychain is intentionally avoided: it requires per-item approval
 // prompts on modern macOS and its output format is unstable.
 package keychain
@@ -20,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -63,15 +65,8 @@ func Save(e Entry) error {
 		return fmt.Errorf("keychain.Save: marshal: %w", err)
 	}
 
-	// -U: update if already exists (idempotent).
-	out, err := run("security", "add-generic-password",
-		"-s", serviceName,
-		"-a", e.Workspace,
-		"-w", string(payload),
-		"-U",
-	)
-	if err != nil {
-		return fmt.Errorf("keychain.Save: %w: %s", err, out)
+	if err := secrets().set(e.Workspace, string(payload)); err != nil {
+		return fmt.Errorf("keychain.Save: %w", err)
 	}
 
 	if err := indexAdd(e.Workspace); err != nil {
@@ -86,16 +81,12 @@ func Load(workspace string) (Entry, error) {
 	if workspace == "" {
 		return Entry{}, errors.New("keychain.Load: workspace must not be empty")
 	}
-	out, err := run("security", "find-generic-password",
-		"-s", serviceName,
-		"-a", workspace,
-		"-w",
-	)
+	out, err := secrets().get(workspace)
+	if errors.Is(err, ErrNotFound) {
+		return Entry{}, ErrNotFound
+	}
 	if err != nil {
-		if isNotFound(out) {
-			return Entry{}, ErrNotFound
-		}
-		return Entry{}, fmt.Errorf("keychain.Load: %w: %s", err, out)
+		return Entry{}, fmt.Errorf("keychain.Load: %w", err)
 	}
 
 	var e Entry
@@ -112,15 +103,12 @@ func Delete(workspace string) error {
 	if workspace == "" {
 		return errors.New("keychain.Delete: workspace must not be empty")
 	}
-	out, err := run("security", "delete-generic-password",
-		"-s", serviceName,
-		"-a", workspace,
-	)
+	err := secrets().del(workspace)
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
 	if err != nil {
-		if isNotFound(out) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("keychain.Delete: %w: %s", err, out)
+		return fmt.Errorf("keychain.Delete: %w", err)
 	}
 
 	if err := indexRemove(workspace); err != nil {
@@ -165,16 +153,12 @@ func List() (entries []Entry, corrupt []string, err error) {
 // indexLoad reads the workspace index. Returns an empty slice if the index
 // item does not yet exist.
 func indexLoad() ([]string, error) {
-	out, err := run("security", "find-generic-password",
-		"-s", serviceName,
-		"-a", indexAccount,
-		"-w",
-	)
+	out, err := secrets().get(indexAccount)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
 	if err != nil {
-		if isNotFound(out) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("indexLoad: %w: %s", err, out)
+		return nil, fmt.Errorf("indexLoad: %w", err)
 	}
 
 	var workspaces []string
@@ -191,14 +175,8 @@ func indexSave(workspaces []string) error {
 	if err != nil {
 		return fmt.Errorf("indexSave: marshal: %w", err)
 	}
-	out, err := run("security", "add-generic-password",
-		"-s", serviceName,
-		"-a", indexAccount,
-		"-w", string(payload),
-		"-U",
-	)
-	if err != nil {
-		return fmt.Errorf("indexSave: %w: %s", err, out)
+	if err := secrets().set(indexAccount, string(payload)); err != nil {
+		return fmt.Errorf("indexSave: %w", err)
 	}
 	return nil
 }
@@ -233,26 +211,6 @@ func indexRemove(workspace string) error {
 		return nil // not in index, nothing to do
 	}
 	return indexSave(filtered)
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// isNotFound reports whether a `security` command output indicates the item
-// was not found (exit code 44).
-func isNotFound(out string) bool {
-	return strings.Contains(out, "could not be found") ||
-		strings.Contains(out, "The specified item could not be found")
-}
-
-// run executes a command and returns combined stdout+stderr and any error.
-func run(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("%s: %w", name, err)
-	}
-	return string(out), nil
 }
 
 // ---------------------------------------------------------------------------
