@@ -16,6 +16,9 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w
       - -X github.com/cgrossde/slackcli/cmd.version={{.Version}}
@@ -25,6 +28,21 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     files:
       - completions/*
+
+# Signing is mandatory: `enabled` defaults to false, so it is set explicitly.
+# Missing secrets render empty values and fail the release instead of
+# publishing unsigned binaries.
+notarize:
+  macos:
+    - enabled: true
+      sign:
+        certificate: "{{.Env.MACOS_SIGN_P12}}"
+        password: "{{.Env.MACOS_SIGN_PASSWORD}}"
+      notarize:
+        issuer_id: "{{.Env.MACOS_NOTARY_ISSUER_ID}}"
+        key_id: "{{.Env.MACOS_NOTARY_KEY_ID}}"
+        key: "{{.Env.MACOS_NOTARY_KEY}}"
+        wait: true
 
 release:
   github:
@@ -50,10 +68,6 @@ homebrew_casks:
       bash: completions/slackcli.bash
       zsh: completions/slackcli.zsh
       fish: completions/slackcli.fish
-    hooks:
-      post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/slackcli"]
 
 changelog:
   sort: asc

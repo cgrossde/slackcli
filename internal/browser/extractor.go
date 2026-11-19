@@ -215,10 +215,10 @@ func cdpReadLocalStorage(conn *cdpConn) string {
 	}
 	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		preview := tok
-		if len(preview) > 40 {
-			preview = preview[:40] + "..."
+		if len(preview) > 5 {
+			preview = preview[:5] + "..."
 		}
-		slog.Debug("localStorage token", "value", preview, "matches_re", tokenRE.MatchString(tok))
+		slog.Debug("localStorage token", "prefix", preview, "len", len(tok), "matches_re", tokenRE.MatchString(tok))
 	}
 	if !tokenRE.MatchString(tok) {
 		return ""
